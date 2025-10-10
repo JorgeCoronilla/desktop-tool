@@ -1,0 +1,135 @@
+/* Global theme variables: light (default) and dark overrides */
+
+:root {
+  /* Typography */
+  --font-family-base:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+    Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif;
+
+  /* Backgrounds */
+  --color-bg-0: #f7f8fa; /* app background */
+  --color-bg-1: #ffffff; /* surfaces/cards */
+
+  /* Text */
+  --color-text: #1c1e21; /* main text */
+  --color-text-muted: #6b7280; /* lighter text */
+
+  /* Borders */
+  --color-border: #e5e7eb;
+
+  /* Buttons (base) */
+  --btn-radius: 8px;
+  --btn-padding-y: 8px;
+  --btn-padding-x: 12px;
+
+  /* Buttons: primary */
+  --btn-primary-bg: #2563eb;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover-bg: #1d4ed8;
+
+  /* Buttons: secondary */
+  --btn-secondary-bg: #e5e7eb;
+  --btn-secondary-text: #111827;
+  --btn-secondary-hover-bg: #d1d5db;
+
+  /* Buttons: danger */
+  --btn-danger-bg: #dc2626;
+  --btn-danger-text: #ffffff;
+  --btn-danger-hover-bg: #b91c1c;
+
+  /* Chat bubbles */
+  --chat-assistant-bg: #f3f4f6; /* light gray bubble */
+  --chat-assistant-text: #1f2937; /* slate-800 */
+  --chat-user-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --chat-user-text: #ffffff;
+  --chat-bubble-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+
+  /* File Explorer */
+  --file-item-hover-bg: #f3f4f6; /* light hover background for tree items */
+}
+
+[data-theme='dark'] {
+  --color-bg-0: #0f1318;
+  --color-bg-1: #151a21;
+
+  --color-text: #e5e7eb;
+  --color-text-muted: #9ca3af;
+
+  --color-border: #2a2f36;
+
+  --btn-primary-bg: #3b82f6;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover-bg: #1e40af;
+
+  --btn-secondary-bg: #2a2f36;
+  --btn-secondary-text: #e5e7eb;
+  --btn-secondary-hover-bg: #374151;
+
+  --btn-danger-bg: #ef4444;
+  --btn-danger-text: #ffffff;
+  --btn-danger-hover-bg: #b91c1c;
+
+  /* Chat bubbles */
+  --chat-assistant-bg: #2d2d2d; /* dark bubble */
+  --chat-assistant-text: #e5e7eb; /* light text */
+  --chat-user-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --chat-user-text: #ffffff;
+  --chat-bubble-shadow: none;
+
+  /* File Explorer */
+  --file-item-hover-bg: #30363d; /* dark hover background for tree items */
+}
+
+/* Global base styles driven by variables */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html,
+body {
+  background-color: var(--color-bg-0);
+  color: var(--color-text);
+  font-family: var(--font-family-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Optional utility classes for buttons using the variables */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--btn-radius);
+  padding: var(--btn-padding-y) var(--btn-padding-x);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.btn--primary {
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+}
+.btn--primary:hover {
+  background-color: var(--btn-primary-hover-bg);
+}
+
+.btn--secondary {
+  background-color: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+}
+.btn--secondary:hover {
+  background-color: var(--btn-secondary-hover-bg);
+}
+
+.btn--danger {
+  background-color: var(--btn-danger-bg);
+  color: var(--btn-danger-text);
+}
+.btn--danger:hover {
+  background-color: var(--btn-danger-hover-bg);
+}

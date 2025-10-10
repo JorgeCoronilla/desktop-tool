@@ -1,0 +1,9 @@
+Este es un archivo de prueba para verificar el nuevo mensaje de confirmación mejorado.
+
+El mensaje ahora incluye:
+- Emojis más llamativos (🚨)
+- Formato más claro con markdown
+- Múltiples opciones para proceder
+- Información más detallada sobre la operación
+
+Fecha de creación: ${new Date().toISOString()}

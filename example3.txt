@@ -1,0 +1,2 @@
+Este es un archivo de ejemplo creado para probar el sistema.
+Contenido de prueba para example3.txt

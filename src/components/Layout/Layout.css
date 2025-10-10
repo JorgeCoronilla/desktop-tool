@@ -1,0 +1,178 @@
+/* Layout component styles */
+
+.layout-container {
+  display: grid;
+  grid-template-rows: 48px 1fr;
+  height: 100vh;
+  background-color: var(--color-bg-0);
+  color: var(--color-text);
+}
+
+.layout-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+}
+
+.layout-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.layout-content {
+  display: grid;
+  grid-template-columns: var(--left-width, 1fr) var(--divider-width, 20px) var(
+      --right-width,
+      1.5fr
+    );
+  min-height: 0; /* permite scroll interno en hijos */
+}
+
+.header-button {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.header-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.chat-panel {
+  background-color: var(--color-bg-1);
+  border-right: 1px solid var(--color-border);
+  display: grid;
+  grid-template-rows: 40px 1fr; /* header fijo + contenido scrollable */
+  height: 100%;
+  min-height: 0; /* evita que la columna izquierda empuje al contenedor */
+  overflow: hidden; /* scroll dentro del Chat */
+}
+
+.chat-content {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-panel {
+  background-color: var(--color-bg-0);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0; /* permite scroll interno del explorador sin desplazar la columna */
+  overflow: hidden; /* scroll dentro del FileExplorer */
+}
+
+.layout-breadcrumb {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  background-color: var(--color-bg-1);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.layout-breadcrumb-item {
+  color: var(--btn-primary-bg);
+  cursor: pointer;
+}
+
+.layout-breadcrumb-sep {
+  color: var(--color-text-muted);
+}
+
+.toolbar {
+  height: 40px;
+  line-height: 40px; /* asegura coincidencia visual exacta con el chat header */
+  background-color: var(--color-bg-1);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.toolbar-button {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+  border: none;
+  padding: 6px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.2s;
+}
+
+.toolbar-button:hover {
+  background: var(--btn-secondary-hover-bg);
+}
+
+.toolbar-button:disabled {
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.toolbar-button-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+}
+
+.toolbar-button-primary:hover {
+  background: var(--btn-primary-hover-bg);
+}
+
+.folder-path {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-left: auto;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+/* Resizer styles */
+.resize-handle {
+  width: 100%;
+  cursor: col-resize;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.resize-line {
+  width: 1px;
+  height: 100%;
+  background-color: var(--color-border);
+}
+
+.resize-icon {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.resize-handle:hover .resize-icon {
+  opacity: 1;
+}
+
+.resize-handle:hover .resize-line {
+  background-color: var(--btn-primary-bg);
+}

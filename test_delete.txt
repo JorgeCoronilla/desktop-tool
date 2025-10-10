@@ -1,0 +1,2 @@
+Este es un archivo de prueba para verificar la eliminación.
+Puede ser eliminado sin problemas.

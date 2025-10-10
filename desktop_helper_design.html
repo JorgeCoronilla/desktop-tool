@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desktop Helper - Diseño</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            padding: 20px;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .theme-toggle {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .theme-toggle button {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .theme-toggle button:hover {
+            background: #357ae8;
+            transform: translateY(-2px);
+        }
+
+        .mockup {
+            background: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            margin-bottom: 40px;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .header-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .header-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* Main Layout */
+        .main-layout {
+            display: flex;
+            height: 600px;
+        }
+
+        /* Left Panel - Chat */
+        .chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #e0e0e0;
+        }
+
+        .chat-header {
+            padding: 16px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #ffffff;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            text-align: right;
+        }
+
+        .message-bubble {
+            display: inline-block;
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 4px;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant .message-bubble {
+            background: #f1f3f4;
+            color: #333;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-time {
+            font-size: 11px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .chat-input-area {
+            padding: 16px 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.3s;
+        }
+
+        .chat-input:focus {
+            border-color: #667eea;
+            background: #fff;
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        /* Right Panel - File Explorer */
+        .file-panel {
+            width: 400px;
+            display: flex;
+            flex-direction: column;
+            background: #fafafa;
+        }
+
+        .file-header {
+            padding: 16px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .file-header h3 {
+            font-size: 16px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .select-folder-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .select-folder-btn:hover {
+            background: #5568d3;
+        }
+
+        .breadcrumb {
+            padding: 12px 20px;
+            background: #ffffff;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .breadcrumb-item {
+            display: inline-block;
+            color: #667eea;
+            cursor: pointer;
+        }
+
+        .breadcrumb-item:hover {
+            text-decoration: underline;
+        }
+
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .tree-item {
+            padding: 8px 12px;
+            margin-bottom: 2px;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid transparent;
+        }
+
+        .tree-item:hover {
+            background: #f0f0f0;
+            border-color: #667eea;
+        }
+
+        .tree-item.level-1 {
+            padding-left: 32px;
+        }
+
+        .tree-item.level-2 {
+            padding-left: 52px;
+        }
+
+        .tree-toggle {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: #666;
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+
+        .tree-toggle:hover {
+            color: #667eea;
+        }
+
+        .tree-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .tree-spacer {
+            width: 16px;
+            height: 16px;
+        }
+
+        .tree-children {
+            overflow: hidden;
+            max-height: 1000px;
+            transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+            opacity: 1;
+        }
+
+        .tree-children.collapsed {
+            max-height: 0;
+            opacity: 0;
+        }
+
+        .file-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #e8eaf6;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        .file-icon.folder {
+            background: #fff3e0;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .file-meta {
+            font-size: 11px;
+            color: #999;
+            margin-top: 2px;
+        }
+
+        /* Dark Theme */
+        .dark-theme .mockup {
+            background: #1e1e1e;
+        }
+
+        .dark-theme .chat-panel {
+            border-right-color: #333;
+        }
+
+        .dark-theme .chat-header,
+        .dark-theme .chat-input-area,
+        .dark-theme .file-header {
+            background: #252525;
+            border-color: #333;
+            color: #e0e0e0;
+        }
+
+        .dark-theme .chat-messages {
+            background: #1e1e1e;
+        }
+
+        .dark-theme .message.assistant .message-bubble {
+            background: #2d2d2d;
+            color: #e0e0e0;
+        }
+
+        .dark-theme .chat-input {
+            background: #2d2d2d;
+            border-color: #404040;
+            color: #e0e0e0;
+        }
+
+        .dark-theme .chat-input:focus {
+            background: #333;
+            border-color: #667eea;
+        }
+
+        .dark-theme .file-panel {
+            background: #252525;
+        }
+
+        .dark-theme .breadcrumb {
+            background: #1e1e1e;
+            border-color: #333;
+            color: #999;
+        }
+
+        .dark-theme .file-list {
+            background: #1e1e1e;
+        }
+
+        .dark-theme .tree-item {
+            background: #2d2d2d;
+            border-color: transparent;
+        }
+
+        .dark-theme .tree-item:hover {
+            background: #353535;
+            border-color: #667eea;
+        }
+
+        .dark-theme .file-name {
+            color: #e0e0e0;
+        }
+
+        .dark-theme .file-header h3 {
+            color: #e0e0e0;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 4px;
+        }
+
+        .dark-theme ::-webkit-scrollbar-thumb {
+            background: #555;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+
+        .label {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 24px;
+            font-weight: 600;
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="theme-toggle">
+            <button onclick="toggleTheme()">🌓 Cambiar Tema</button>
+        </div>
+
+        <div class="label">Tema Claro</div>
+        
+        <!-- Light Theme Mockup -->
+        <div class="mockup" id="lightTheme">
+            <div class="header">
+                <h1>
+                    <span>📁</span>
+                    Desktop Helper
+                </h1>
+                <div class="header-actions">
+                    <button class="header-btn">⚙️ Configuración</button>
+                    <button class="header-btn">ℹ️ Ayuda</button>
+                </div>
+            </div>
+
+            <div class="main-layout">
+                <!-- Chat Panel -->
+                <div class="chat-panel">
+                    <div class="chat-header">
+                        💬 Conversación
+                    </div>
+                    
+                    <div class="chat-messages">
+                        <div class="message assistant">
+                            <div class="message-bubble">
+                                ¡Hola! Soy tu asistente de Desktop Helper. Puedo ayudarte a crear archivos, carpetas, leer documentos Excel y PDF, organizar tus archivos y mucho más. ¿Qué necesitas hacer hoy?
+                            </div>
+                            <div class="message-time">13:06</div>
+                        </div>
+
+                        <div class="message user">
+                            <div class="message-bubble">
+                                Crea una carpeta llamada "Proyectos 2024" en el directorio actual
+                            </div>
+                            <div class="message-time">13:07</div>
+                        </div>
+
+                        <div class="message assistant">
+                            <div class="message-bubble">
+                                ✅ Perfecto! He creado la carpeta "Proyectos 2024" en /Users/tu-usuario/Documentos. La carpeta está lista para usar.
+                            </div>
+                            <div class="message-time">13:07</div>
+                        </div>
+
+                        <div class="message user">
+                            <div class="message-bubble">
+                                Muéstrame todos los archivos PDF de esta carpeta
+                            </div>
+                            <div class="message-time">13:08</div>
+                        </div>
+
+                        <div class="message assistant">
+                            <div class="message-bubble">
+                                He encontrado 3 archivos PDF en esta carpeta:<br><br>
+                                📄 Informe_Q1.pdf (2.3 MB)<br>
+                                📄 Presupuesto.pdf (845 KB)<br>
+                                📄 Manual_Usuario.pdf (5.1 MB)<br><br>
+                                ¿Quieres que abra alguno o necesitas hacer algo con ellos?
+                            </div>
+                            <div class="message-time">13:08</div>
+                        </div>
+                    </div>
+
+                    <div class="chat-input-area">
+                        <div class="input-wrapper">
+                            <input type="text" class="chat-input" placeholder="Escribe tu mensaje aquí..." value="Lee el contenido del archivo Informe_Q1.pdf">
+                            <button class="send-btn">▶</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File Explorer Panel -->
+                <div class="file-panel">
+                    <div class="file-header">
+                        <h3>📂 Explorador</h3>
+                        <button class="select-folder-btn">Seleccionar Carpeta</button>
+                    </div>
+
+                    <div class="breadcrumb">
+                        <span class="breadcrumb-item">🏠 Inicio</span> / 
+                        <span class="breadcrumb-item">Documentos</span> / 
+                        <span class="breadcrumb-item">Trabajo</span>
+                    </div>
+
+                    <div class="file-list">
+                        <div class="tree-item">
+                            <div class="tree-toggle" onclick="toggleFolder(this)">▼</div>
+                            <div class="file-icon folder">📁</div>
+                            <div class="file-info">
+                                <div class="file-name">Documentos</div>
+                                <div class="file-meta">5 elementos</div>
+                            </div>
+                        </div>
+                        
+                        <div class="tree-children">
+                            <div class="tree-item level-1">
+                                <div class="tree-toggle" onclick="toggleFolder(this)">▼</div>
+                                <div class="file-icon folder">📁</div>
+                                <div class="file-info">
+                                    <div class="file-name">Proyectos 2024</div>
+                                    <div class="file-meta">3 elementos</div>
+                                </div>
+                            </div>
+
+                            <div class="tree-children">
+                                <div class="tree-item level-2">
+                                    <div class="tree-spacer"></div>
+                                    <div class="file-icon">📄</div>
+                                    <div class="file-info">
+                                        <div class="file-name">Propuesta_Cliente.pdf</div>
+                                        <div class="file-meta">PDF • 1.8 MB</div>
+                                    </div>
+                                </div>
+
+                                <div class="tree-item level-2">
+                                    <div class="tree-spacer"></div>
+                                    <div class="file-icon">📊</div>
+                                    <div class="file-info">
+                                        <div class="file-name">Presupuesto.xlsx</div>
+                                        <div class="file-meta">Excel • 456 KB</div>
+                                    </div>
+                                </div>
+
+                                <div class="tree-item level-2">
+                                    <div class="tree-spacer"></div>
+                                    <div class="file-icon">📝</div>
+                                    <div class="file-info">
+                                        <div class="file-name">Notas.docx</div>
+                                        <div class="file-meta">Word • 124 KB</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tree-item level-1">
+                                <div class="tree-toggle" onclick="toggleFolder(this)">▼</div>
+                                <div class="file-icon folder">📁</div>
+                                <div class="file-info">
+                                    <div class="file-name">Reportes</div>
+                                    <div class="file-meta">2 elementos</div>
+                                </div>
+                            </div>
+
+                            <div class="tree-children">
+                                <div class="tree-item level-2">
+                                    <div class="tree-spacer"></div>
+                                    <div class="file-icon">📄</div>
+                                    <div class="file-info">
+                                        <div class="file-name">Informe_Q1.pdf</div>
+                                        <div class="file-meta">PDF • 2.3 MB</div>
+                                    </div>
+                                </div>
+
+                                <div class="tree-item level-2">
+                                    <div class="tree-spacer"></div>
+                                    <div class="file-icon">📊</div>
+                                    <div class="file-info">
+                                        <div class="file-name">Ventas_2024.xlsx</div>
+                                        <div class="file-meta">Excel • 845 KB</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tree-item level-1">
+                                <div class="tree-spacer"></div>
+                                <div class="file-icon">📄</div>
+                                <div class="file-info">
+                                    <div class="file-name">Manual_Usuario.pdf</div>
+                                    <div class="file-meta">PDF • 5.1 MB</div>
+                                </div>
+                            </div>
+
+                            <div class="tree-item level-1">
+                                <div class="tree-spacer"></div>
+                                <div class="file-icon">🖼️</div>
+                                <div class="file-info">
+                                    <div class="file-name">Logo_Empresa.png</div>
+                                    <div class="file-meta">Imagen • 456 KB</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="label" style="margin-top: 60px;">Tema Oscuro</div>
+
+        <!-- Dark Theme Mockup -->
+        <div class="mockup dark-theme">
+            <div class="header">
+                <h1>
+                    <span>📁</span>
+                    Desktop Helper
+                </h1>
+                <div class="header-actions">
+                    <button class="header-btn">⚙️ Configuración</button>
+                    <button class="header-btn">ℹ️ Ayuda</button>
+                </div>
+            </div>
+
+            <div class="main-layout">
+                <!-- Chat Panel -->
+                <div class="chat-panel">
+                    <div class="chat-header">
+                        💬 Conversación
+                    </div>
+                    
+                    <div class="chat-messages">
+                        <div class="message assistant">
+                            <div class="message-bubble">
+                                ¡Hola! Soy tu asistente de Desktop Helper. Puedo ayudarte a crear archivos, carpetas, leer documentos Excel y PDF, organizar tus archivos y mucho más. ¿Qué necesitas hacer hoy?
+                            </div>
+                            <div class="message-time">13:06</div>
+                        </div>
+
+                        <div class="message user">
+                            <div class="message-bubble">
+                                Crea una carpeta llamada "Proyectos 2024" en el directorio actual
+                            </div>
+                            <div class="message-time">13:07</div>
+                        </div>
+
+                        <div class="message assistant">
+                            <div class="message-bubble">
+                                ✅ Perfecto! He creado la carpeta "Proyectos 2024" en /Users/tu-usuario/Documentos. La carpeta está lista para usar.
+                            </div>
+                            <div class="message-time">13:07</div>
+                        </div>
+
+                        <div class="message user">
+                            <div class="message-bubble">
+                                Muéstrame todos los archivos PDF de esta carpeta
+                            </div>
+                            <div class="message-time">13:08</div>
+                        </div>
+
+                        <div class="message assistant">
+                            <div class="message-bubble">
+                                He encontrado 3 archivos PDF en esta carpeta:<br><br>
+                                📄 Informe_Q1.pdf (2.3 MB)<br>
+                                📄 Presupuesto.pdf (845 KB)<br>
+                                📄 Manual_Usuario.pdf (5.1 MB)<br><br>
+                                ¿Quieres que abra alguno o necesitas hacer algo con ellos?
+                            </div>
+                            <div class="message-time">13:08</div>
+                        </div>
+                    </div>
+
+                    <div class="chat-input-area">
+                        <div class="input-wrapper">
+                            <input type="text" class="chat-input" placeholder="Escribe tu mensaje aquí..." value="Lee el contenido del archivo Informe_Q1.pdf">
+                            <button class="send-btn">▶</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File Explorer Panel -->
+                <div class="file-panel">
+                    <div class="file-header">
+                        <h3>📂 Explorador</h3>
+                        <button class="select-folder-btn">Seleccionar Carpeta</button>
+                    </div>
+
+                    <div class="breadcrumb">
+                        <span class="breadcrumb-item">🏠 Inicio</span> / 
+                        <span class="breadcrumb-item">Documentos</span> / 
+                        <span class="breadcrumb-item">Trabajo</span>
+                    </div>
+
+                    <div class="file-list">
+                        <div class="file-item">
+                            <div class="file-icon folder">📁</div>
+                            <div class="file-info">
+                                <div class="file-name">Proyectos 2024</div>
+                                <div class="file-meta">Carpeta • Modificado hace 2 min</div>
+                            </div>
+                        </div>
+
+                        <div class="file-item">
+                            <div class="file-icon folder">📁</div>
+                            <div class="file-info">
+                                <div class="file-name">Reportes</div>
+                                <div class="file-meta">Carpeta • 15 elementos</div>
+                            </div>
+                        </div>
+
+                        <div class="file-item">
+                            <div class="file-icon">📄</div>
+                            <div class="file-info">
+                                <div class="file-name">Informe_Q1.pdf</div>
+                                <div class="file-meta">PDF • 2.3 MB • 12 ene 2025</div>
+                            </div>
+                        </div>
+
+                        <div class="file-item">
+                            <div class="file-icon">📊</div>
+                            <div class="file-info">
+                                <div class="file-name">Ventas_2024.xlsx</div>
+                                <div class="file-meta">Excel • 845 KB • 10 ene 2025</div>
+                            </div>
+                        </div>
+
+                        <div class="file-item">
+                            <div class="file-icon">📄</div>
+                            <div class="file-info">
+                                <div class="file-name">Presupuesto.pdf</div>
+                                <div class="file-meta">PDF • 1.2 MB • 8 ene 2025</div>
+                            </div>
+                        </div>
+
+                        <div class="file-item">
+                            <div class="file-icon">📝</div>
+                            <div class="file-info">
+                                <div class="file-name">Notas_Reunion.docx</div>
+                                <div class="file-meta">Word • 234 KB • 5 ene 2025</div>
+                            </div>
+                        </div>
+
+                        <div class="file-item">
+                            <div class="file-icon">🖼️</div>
+                            <div class="file-info">
+                                <div class="file-name">Logo_Empresa.png</div>
+                                <div class="file-meta">Imagen • 456 KB • 3 ene 2025</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const lightTheme = document.getElementById('lightTheme');
+            lightTheme.classList.toggle('dark-theme');
+        }
+
+        function toggleFolder(toggleEl) {
+            toggleEl.classList.toggle('collapsed');
+            const treeItem = toggleEl.parentElement;
+            const nextSibling = treeItem.nextElementSibling;
+            
+            if (nextSibling && nextSibling.classList.contains('tree-children')) {
+                nextSibling.classList.toggle('collapsed');
+            }
+        }
+    </script>
+</body>
+</html>
