@@ -12,6 +12,8 @@
     "dev:web": "concurrently \"npm run dev:renderer\" \"npm run dev:proxy\"",
     "dev:main": "npm run build:main && NODE_ENV=development electron dist/main/main/main.js",
     "start": "npm run build && npm run build:main && electron dist/main/main/main.js",
+    "mcp:build": "tsc src/mcp/server.ts --outDir dist/mcp --target es2022 --module esnext --moduleResolution bundler --esModuleInterop --allowSyntheticDefaultImports && echo '{\"type\": \"module\"}' > dist/mcp/package.json",
+    "mcp:server": "npm run mcp:build && node dist/mcp/server.js",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,md,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,md,json}\"",
     "format:staged": "prettier --write"
@@ -48,6 +50,7 @@
     "webpack-dev-server": "^5.2.2"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
     "csv-parser": "^3.2.0",
     "events": "^3.3.0",
     "fs-extra": "^11.3.2",

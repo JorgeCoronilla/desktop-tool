@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "desktop-helper": {
+      "command": "/Users/jorgecn/.nvm/versions/node/v20.18.1/bin/node",
+      "args": ["/Users/jorgecn/dev/desktop-helper/dist/mcp/server.cjs"],
+      "cwd": "/Users/jorgecn/dev/desktop-helper"
+    }
+  }
+}
