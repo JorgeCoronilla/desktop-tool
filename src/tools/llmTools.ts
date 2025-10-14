@@ -790,13 +790,13 @@ export const AVAILABLE_TOOLS: FileSystemTool[] = [
   },
   {
     name: 'read_pdf',
-    description: 'Lee el contenido de texto de un archivo PDF',
+    description: 'USAR SIEMPRE PRIMERO: Lee y extrae texto de cualquier archivo PDF. Esta es la herramienta principal para leer PDFs.',
     parameters: { filePath: 'string' },
     execute: PDFTools.readPDF,
   },
   {
     name: 'ocr_pdf',
-    description: 'Realiza OCR en un PDF escaneado',
+    description: 'SOLO usar si read_pdf falla: OCR para PDFs escaneados como imágenes. NO usar para PDFs normales.',
     parameters: { filePath: 'string' },
     execute: PDFTools.ocrPDF,
   },

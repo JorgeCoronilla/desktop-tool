@@ -16,16 +16,19 @@ export interface OpenAIConfig {
   hasApiKey: boolean;
   model: string;
   isInitialized: boolean;
+  apiKey?: string;
 }
 
 export interface ElectronAPI {
   selectFolder: () => Promise<string | null>;
   readDirectory: (path: string) => Promise<FileItem[]>;
   getFileStats: (path: string) => Promise<FileStats | null>;
+  countFilesRecursively: (path: string) => Promise<number>;
   // OpenAI functions
   initOpenAI: (apiKey?: string) => Promise<OpenAIResponse>;
   sendMessageToOpenAI: (messages: ChatMessage[]) => Promise<OpenAIResponse>;
   checkOpenAIConfig: () => Promise<OpenAIConfig>;
+  getOpenAIConfig: () => Promise<OpenAIConfig>;
   // FS real operations
   readTextFile: (
     filePath: string
@@ -92,6 +95,29 @@ export interface ElectronAPI {
       deleteRows?: number[];
     }
   ) => Promise<{ success: boolean; data?: any; error?: string }>;
+  // MCP Service functions (secure)
+  mcpServiceInit: () => Promise<{ success: boolean; isInitialized: boolean; error?: string }>;
+  mcpServiceSendMessage: (
+    messages: ChatMessage[],
+    options?: { currentFolder?: string }
+  ) => Promise<{ success: boolean; response?: any; error?: string }>;
+  mcpServiceCheckHealth: () => Promise<{ success: boolean; isHealthy?: boolean; error?: string }>;
+  mcpServiceGetTools: () => Promise<{ success: boolean; tools?: string[]; error?: string }>;
+  // MCP functions (legacy)
+  mcpCallTool: (
+    toolName: string,
+    arguments_: Record<string, any>,
+    options?: { cwd?: string }
+  ) => Promise<{ success: boolean; result?: any; error?: string }>;
+  mcpGetTools: () => Promise<{ success: boolean; tools?: any[]; error?: string }>;
+  mcpGetToolDocumentation: () => Promise<{ success: boolean; documentation?: string; error?: string }>;
+  mcpGetOpenAIFunctions: () => Promise<{ success: boolean; functions?: any[]; error?: string }>;
+  // File watcher functions
+  startFileWatcher: (dirPath: string) => Promise<{ success: boolean; error?: string }>;
+  stopFileWatcher: () => Promise<{ success: boolean; error?: string }>;
+  // Event listeners
+  on: (channel: string, listener: (...args: any[]) => void) => void;
+  off: (channel: string, listener: (...args: any[]) => void) => void;
 }
 
 export interface FileItem {
@@ -110,11 +136,13 @@ const electronAPI: ElectronAPI = {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   readDirectory: (path: string) => ipcRenderer.invoke('read-directory', path),
   getFileStats: (path: string) => ipcRenderer.invoke('get-file-stats', path),
+  countFilesRecursively: (path: string) => ipcRenderer.invoke('count-files-recursively', path),
   // OpenAI functions
   initOpenAI: (apiKey?: string) => ipcRenderer.invoke('init-openai', apiKey),
   sendMessageToOpenAI: (messages: ChatMessage[]) =>
     ipcRenderer.invoke('send-message-to-openai', messages),
   checkOpenAIConfig: () => ipcRenderer.invoke('check-openai-config'),
+  getOpenAIConfig: () => ipcRenderer.invoke('get-openai-config'),
   // FS real operations
   readTextFile: (filePath: string) =>
     ipcRenderer.invoke('fs-read-text', filePath),
@@ -144,6 +172,28 @@ const electronAPI: ElectronAPI = {
       deleteRows?: number[];
     }
   ) => ipcRenderer.invoke('excel-modify', filePath, modifications),
+  // MCP Service functions (secure)
+  mcpServiceInit: () => ipcRenderer.invoke('mcp-service-init'),
+  mcpServiceSendMessage: (messages: ChatMessage[], options?: { currentFolder?: string }) =>
+    ipcRenderer.invoke('mcp-service-send-message', messages, options),
+  mcpServiceCheckHealth: () => ipcRenderer.invoke('mcp-service-check-health'),
+  mcpServiceGetTools: () => ipcRenderer.invoke('mcp-service-get-tools'),
+  // MCP functions (legacy)
+  mcpCallTool: (toolName: string, arguments_: Record<string, any>, options?: { cwd?: string }) =>
+    ipcRenderer.invoke('mcp-call-tool', toolName, arguments_, options),
+  mcpGetTools: () => ipcRenderer.invoke('mcp-get-tools'),
+  mcpGetToolDocumentation: () => ipcRenderer.invoke('mcp-get-tool-documentation'),
+  mcpGetOpenAIFunctions: () => ipcRenderer.invoke('mcp-get-openai-functions'),
+  // File watcher functions
+  startFileWatcher: (dirPath: string) => ipcRenderer.invoke('start-file-watcher', dirPath),
+  stopFileWatcher: () => ipcRenderer.invoke('stop-file-watcher'),
+  // Event listeners
+  on: (channel: string, listener: (...args: any[]) => void) => {
+    ipcRenderer.on(channel, listener);
+  },
+  off: (channel: string, listener: (...args: any[]) => void) => {
+    ipcRenderer.removeListener(channel, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

@@ -8,6 +8,8 @@ interface FileExplorerProps {
   currentFolder: string | null;
   isLoading: boolean;
   onNavigateToFolder: (folderPath: string) => void;
+  totalFilesCount?: number;
+  onRefreshSubfolders?: () => void;
 }
 
 interface TreeNode extends FileItem {
@@ -16,15 +18,16 @@ interface TreeNode extends FileItem {
   level?: number;
 }
 
-const FileExplorer: React.FC<FileExplorerProps> = ({
-  files,
-  currentFolder,
-  isLoading,
-  onNavigateToFolder,
-}) => {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
-    new Set()
-  );
+const FileExplorer: React.FC<FileExplorerProps> = ({ files, currentFolder, isLoading, onNavigateToFolder, totalFilesCount, onRefreshSubfolders }) => {
+  console.log('[FileExplorer] Component rendering with:', {
+    filesCount: totalFilesCount || 0,
+    currentFolder,
+    isLoading,
+    filesArray: files
+  });
+  console.log('[FileExplorer] Files names:', files.map(f => f.name));
+
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [folderContents, setFolderContents] = useState<Map<string, FileItem[]>>(
     new Map()
   );
@@ -71,6 +74,29 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
       return [];
     }
   }, []);
+
+  // Función para refrescar todas las carpetas expandidas
+  const refreshExpandedFolders = useCallback(async () => {
+    console.log('[FileExplorer] Refreshing expanded folders:', Array.from(expandedFolders));
+    
+    // Recargar contenido de todas las carpetas expandidas
+    for (const folderPath of expandedFolders) {
+      try {
+        await loadFolderContents(folderPath);
+        console.log('[FileExplorer] Refreshed folder:', folderPath);
+      } catch (error) {
+        console.error('[FileExplorer] Error refreshing folder:', folderPath, error);
+      }
+    }
+  }, [expandedFolders, loadFolderContents]);
+
+  // Exponer la función de refresh a través del callback
+  React.useEffect(() => {
+    if (onRefreshSubfolders) {
+      // Reemplazar la función de callback con nuestra función local
+      (window as any).__refreshExpandedFolders = refreshExpandedFolders;
+    }
+  }, [refreshExpandedFolders, onRefreshSubfolders]);
 
   // Función para alternar expansión de carpetas
   const toggleFolder = useCallback(

@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './Chat.css';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { ChatMessage } from '../../types/global';
 
 interface ChatProps {
@@ -24,7 +23,6 @@ const Chat: React.FC<ChatProps> = ({
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const gfmPlugin: any = remarkGfm;
   const [isNearBottom, setIsNearBottom] = useState(true);
 
   // Usamos clases globales, no CSS Modules
@@ -106,7 +104,7 @@ const Chat: React.FC<ChatProps> = ({
               }`}
             >
               <div className={'message-content'}>
-                <ReactMarkdown remarkPlugins={[gfmPlugin]}>
+                <ReactMarkdown>
                   {message.content}
                 </ReactMarkdown>
               </div>

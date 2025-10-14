@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "desktop-helper": {
-      "command": "node",
-      "args": ["dist/mcp/server.js"],
-      "cwd": "/Users/jorgecn/dev/desktop-helper"
-    }
-  }
-}

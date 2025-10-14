@@ -1,25 +1,42 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as pdfParse from 'pdf-parse';
+const chokidar = require('chokidar');
 import * as XLSX from 'xlsx';
 import { fromPath as pdfToPicFromPath } from 'pdf2pic';
 import { createWorker } from 'tesseract.js';
 import * as dotenv from 'dotenv';
 import { createOpenAIService, ChatMessage } from '../services/openaiService';
+import { ElectronMCPService } from '../mcp/electronMcpService';
+import { IntegratedMCPService, MCPResponse } from '../services/integratedMcpService';
 
-// Normalizar export de pdf-parse (algunas instalaciones ESM exponen default)
-const pdfParseFn: any = (pdfParse as any).default ?? (pdfParse as any);
+// Inicialización de pdf-parse v2.3.0
+let PDFParseClass: any = null;
+
+async function initializePdfParse() {
+  if (!PDFParseClass) {
+    const pdfParseModule = await import('pdf-parse');
+    // En v2.3.0, necesitamos la clase PDFParse
+    PDFParseClass = (pdfParseModule as any).PDFParse || (pdfParseModule as any).default?.PDFParse;
+  }
+  return PDFParseClass;
+}
 
 // Cargar variables de entorno
 dotenv.config();
 
-// Inicialización automática de OpenAI si hay API key en entorno
+// Instancia global del servicio OpenAI
 let openaiService: any = null;
+
+// Instancia del servicio MCP integrado
+const mcpService = new ElectronMCPService();
+
+// Instancia del servicio MCP integrado con OpenAI
+let integratedMcpService: IntegratedMCPService | null = null;
 function ensureOpenAIInitialized(): void {
   try {
     const key = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    const model = process.env.OPENAI_MODEL || 'gpt-4o';
     if (key && !openaiService) {
       console.log(
         '[OpenAI] Detectada API key en entorno. Inicializando servicio...'
@@ -39,7 +56,33 @@ function ensureOpenAIInitialized(): void {
   }
 }
 
+function ensureIntegratedMCPServiceInitialized(): void {
+  if (!integratedMcpService) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.warn('[IntegratedMCP] No se encontró OPENAI_API_KEY en el entorno');
+      return;
+    }
+
+    console.log('[IntegratedMCP] Inicializando IntegratedMCPService...');
+    try {
+      integratedMcpService = new IntegratedMCPService({
+        apiKey,
+        model: process.env.OPENAI_MODEL || 'gpt-4o'
+      });
+      console.log('[IntegratedMCP] IntegratedMCPService inicializado correctamente.');
+    } catch (error) {
+      console.error('[IntegratedMCP] Error inicializando IntegratedMCPService:', error);
+      integratedMcpService = null;
+    }
+  }
+}
+
 let mainWindow: BrowserWindow;
+
+// File watcher variables
+let currentWatcher: any = null;
+let currentWatchedPath: string | null = null;
 
 // Límites de tamaño (MB)
 const MAX_PDF_SIZE_MB = 50;
@@ -156,14 +199,111 @@ ipcMain.handle('select-folder', async () => {
   return null;
 });
 
+// Función auxiliar para contar archivos recursivamente (solo para logging)
+async function countFilesRecursively(dirPath: string): Promise<number> {
+  try {
+    const items = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    let count = 0;
+    
+    for (const item of items) {
+      const fullPath = path.join(dirPath, item.name);
+      if (item.isDirectory()) {
+        count += await countFilesRecursively(fullPath);
+      } else {
+        count++;
+      }
+    }
+    
+    return count;
+  } catch (error) {
+    return 0;
+  }
+}
+
+// File watcher functions
+function startWatchingDirectory(dirPath: string): void {
+  // Stop any existing watcher
+  stopWatchingDirectory();
+  
+  console.log(`[FileWatcher] Starting to watch: ${dirPath}`);
+  
+  currentWatcher = chokidar.watch(dirPath, {
+    ignored: /(^|[\/\\])\../, // ignore dotfiles
+    persistent: true,
+    ignoreInitial: true,
+    depth: 10 // watch up to 10 levels deep
+  });
+
+  currentWatchedPath = dirPath;
+
+  // File/directory added
+  currentWatcher.on('add', (filePath) => {
+    console.log(`[FileWatcher] File added: ${filePath}`);
+    notifyFileSystemChange('add', filePath);
+  });
+
+  // File changed
+  currentWatcher.on('change', (filePath) => {
+    console.log(`[FileWatcher] File changed: ${filePath}`);
+    notifyFileSystemChange('change', filePath);
+  });
+
+  // File/directory removed
+  currentWatcher.on('unlink', (filePath) => {
+    console.log(`[FileWatcher] File removed: ${filePath}`);
+    notifyFileSystemChange('unlink', filePath);
+  });
+
+  // Directory added
+  currentWatcher.on('addDir', (dirPath) => {
+    console.log(`[FileWatcher] Directory added: ${dirPath}`);
+    notifyFileSystemChange('addDir', dirPath);
+  });
+
+  // Directory removed
+  currentWatcher.on('unlinkDir', (dirPath) => {
+    console.log(`[FileWatcher] Directory removed: ${dirPath}`);
+    notifyFileSystemChange('unlinkDir', dirPath);
+  });
+
+  currentWatcher.on('error', (error) => {
+    console.error('[FileWatcher] Error:', error);
+  });
+}
+
+function stopWatchingDirectory(): void {
+  if (currentWatcher) {
+    console.log(`[FileWatcher] Stopping watcher for: ${currentWatchedPath}`);
+    currentWatcher.close();
+    currentWatcher = null;
+    currentWatchedPath = null;
+  }
+}
+
+function notifyFileSystemChange(eventType: string, filePath: string): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('file-system-change', {
+      type: eventType,
+      path: filePath,
+      watchedPath: currentWatchedPath
+    });
+  }
+}
+
 ipcMain.handle('read-directory', async (_, dirPath: string) => {
   try {
     const items = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    return items.map(item => ({
+    const result = items.map(item => ({
       name: item.name,
       isDirectory: item.isDirectory(),
       path: path.join(dirPath, item.name),
     }));
+    
+    // Contar archivos recursivamente solo para logging
+    const totalFiles = await countFilesRecursively(dirPath);
+    console.log(`[DEBUG] Directory items in current level: ${result.length}, Total files recursively: ${totalFiles}`);
+    
+    return result;
   } catch (error) {
     console.error('Error reading directory:', error);
     return [];
@@ -181,6 +321,17 @@ ipcMain.handle('get-file-stats', async (_, filePath: string) => {
   } catch (error) {
     console.error('Error getting file stats:', error);
     return null;
+  }
+});
+
+ipcMain.handle('count-files-recursively', async (_, dirPath: string) => {
+  try {
+    const count = await countFilesRecursively(dirPath);
+    console.log(`[DEBUG] Recursive file count for ${dirPath}: ${count}`);
+    return count;
+  } catch (error) {
+    console.error('Error counting files recursively:', error);
+    return 0;
   }
 });
 
@@ -273,16 +424,33 @@ ipcMain.handle('pdf-read', async (_, filePath: string) => {
     if (!sizeCheck.ok) {
       return { success: false, error: sizeCheck.error };
     }
+    
+    // Inicializar pdf-parse si no está disponible
+    if (!PDFParseClass) {
+      await initializePdfParse();
+    }
+    
     const dataBuffer = await fs.promises.readFile(filePath);
-    const parsed = await pdfParseFn(dataBuffer);
-    return {
-      success: true,
-      data: {
-        text: parsed.text,
-        pages: parsed.numpages,
-        info: parsed.info || {},
-      },
-    };
+    
+    // Usar la nueva API de pdf-parse v2.3.0
+    const parser = new PDFParseClass({ data: dataBuffer });
+    let parsed;
+    try {
+      parsed = await parser.getText();
+      return {
+        success: true,
+        data: {
+          text: parsed.text,
+          pages: parsed.total || parsed.numpages || 1,
+          info: parsed.info || {},
+        },
+      };
+    } finally {
+      // Limpiar el parser
+      if (parser && typeof parser.destroy === 'function') {
+        await parser.destroy();
+      }
+    }
   } catch (error) {
     console.error('pdf-read error:', error);
     return {
@@ -300,8 +468,13 @@ ipcMain.handle('pdf-ocr', async (_, filePath: string, lang: string = 'eng') => {
       return { success: false, error: sizeCheck.error };
     }
 
+    // Inicializar pdf-parse si no está disponible
+    if (!PDFParseClass) {
+      await initializePdfParse();
+    }
+    
     const dataBuffer = await fs.promises.readFile(filePath);
-    const parsed = await pdfParseFn(dataBuffer);
+    const parsed = await PDFParseClass(dataBuffer);
     const numPages: number = Number(parsed.numpages) || 1;
 
     // Convertir páginas a imágenes temporales
@@ -481,7 +654,7 @@ ipcMain.handle(
 ipcMain.handle('init-openai', async (_, apiKey?: string) => {
   try {
     const key = apiKey || process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    const model = process.env.OPENAI_MODEL || 'gpt-4o';
 
     if (!key) {
       throw new Error('API Key de OpenAI no encontrada');
@@ -521,7 +694,7 @@ ipcMain.handle('send-message-to-openai', async (_, messages: ChatMessage[]) => {
 
 ipcMain.handle('check-openai-config', async () => {
   const hasApiKey = !!process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+  const model = process.env.OPENAI_MODEL || 'gpt-4o';
   console.log(
     '[OpenAI] check-openai-config -> hasApiKey:',
     hasApiKey,
@@ -536,4 +709,196 @@ ipcMain.handle('check-openai-config', async () => {
     model,
     isInitialized: !!openaiService,
   };
+});
+
+ipcMain.handle('get-openai-config', async () => {
+  const hasApiKey = !!process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_MODEL || 'gpt-4o';
+  const apiKey = process.env.OPENAI_API_KEY || '';
+  
+  console.log(
+    '[OpenAI] get-openai-config -> hasApiKey:',
+    hasApiKey,
+    'isInitialized:',
+    !!openaiService,
+    'model:',
+    model
+  );
+
+  return {
+    hasApiKey,
+    model,
+    isInitialized: !!openaiService,
+    apiKey: hasApiKey ? apiKey : undefined,
+  };
+});
+
+// IPC handlers para el servicio MCP integrado
+ipcMain.handle('mcp-service-init', async () => {
+  try {
+    ensureIntegratedMCPServiceInitialized();
+    return { 
+      success: true, 
+      isInitialized: !!integratedMcpService 
+    };
+  } catch (error) {
+    console.error('[IntegratedMCP] Error en mcp-service-init:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Error desconocido',
+      isInitialized: false 
+    };
+  }
+});
+
+ipcMain.handle('mcp-service-send-message', async (_, messages: ChatMessage[], options?: { currentFolder?: string }) => {
+  try {
+    ensureIntegratedMCPServiceInitialized();
+    if (!integratedMcpService) {
+      return { 
+        success: false, 
+        error: 'IntegratedMCPService no está inicializado' 
+      };
+    }
+
+    const response = await integratedMcpService.sendMessage(messages, options);
+    return { 
+      success: true, 
+      response 
+    };
+  } catch (error) {
+    console.error('[IntegratedMCP] Error en mcp-service-send-message:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Error desconocido' 
+    };
+  }
+});
+
+ipcMain.handle('mcp-service-check-health', async () => {
+  try {
+    ensureIntegratedMCPServiceInitialized();
+    if (!integratedMcpService) {
+      return { 
+        success: false, 
+        error: 'IntegratedMCPService no está inicializado' 
+      };
+    }
+
+    const isHealthy = await integratedMcpService.checkHealth();
+    return { 
+      success: true, 
+      isHealthy 
+    };
+  } catch (error) {
+    console.error('[IntegratedMCP] Error en mcp-service-check-health:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Error desconocido' 
+    };
+  }
+});
+
+ipcMain.handle('mcp-service-get-tools', async () => {
+  try {
+    ensureIntegratedMCPServiceInitialized();
+    if (!integratedMcpService) {
+      return { 
+        success: false, 
+        error: 'IntegratedMCPService no está inicializado' 
+      };
+    }
+
+    const tools = integratedMcpService.getAvailableTools();
+    return { 
+      success: true, 
+      tools 
+    };
+  } catch (error) {
+    console.error('[IntegratedMCP] Error en mcp-service-get-tools:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Error desconocido' 
+    };
+  }
+});
+
+// IPC handlers para MCP (legacy)
+ipcMain.handle('mcp-call-tool', async (_, toolName: string, arguments_: Record<string, any>, options?: { cwd?: string }) => {
+  try {
+    const result = await mcpService.callTool(toolName, arguments_, options);
+    return result;
+  } catch (error) {
+    console.error('Error calling MCP tool:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+});
+
+ipcMain.handle('mcp-get-tools', async () => {
+  try {
+    const tools = mcpService.getTools();
+    return { success: true, tools };
+  } catch (error) {
+    console.error('Error getting MCP tools:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+});
+
+ipcMain.handle('mcp-get-tool-documentation', async () => {
+  try {
+    const documentation = mcpService.generateToolDocumentation();
+    return { success: true, documentation };
+  } catch (error) {
+    console.error('Error getting MCP tool documentation:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+});
+
+ipcMain.handle('mcp-get-openai-functions', async () => {
+  try {
+    const functions = mcpService.getOpenAIFunctions();
+    return { success: true, functions };
+  } catch (error) {
+    console.error('Error getting OpenAI functions:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+});
+
+// File watcher IPC handlers
+ipcMain.handle('start-file-watcher', async (_, dirPath: string) => {
+  try {
+    startWatchingDirectory(dirPath);
+    return { success: true };
+  } catch (error) {
+    console.error('Error starting file watcher:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+});
+
+ipcMain.handle('stop-file-watcher', async () => {
+  try {
+    stopWatchingDirectory();
+    return { success: true };
+  } catch (error) {
+    console.error('Error stopping file watcher:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
 });

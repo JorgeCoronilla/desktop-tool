@@ -13,6 +13,7 @@ interface LayoutProps {
   onChangeTokenLimit: (n: number) => void;
   onNavigateToFolder: (folderPath: string) => void;
   onNavigateBack: () => void;
+  onRefreshSubfolders?: () => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({
@@ -24,8 +25,15 @@ const Layout: React.FC<LayoutProps> = ({
   tokenLimit,
   onNavigateToFolder,
   onNavigateBack,
+  onRefreshSubfolders,
 }) => {
   console.log('Layout component rendering...');
+  console.log('[Layout] Passing to FileExplorer:', {
+    filesCount: appState.totalFilesCount || 0,
+    currentFolder: appState.currentFolder,
+    isLoading: appState.isFileLoading,
+    filesArray: appState.files
+  });
 
   // Split widths (percentages) controlled via CSS variables
   const [leftPct, setLeftPct] = useState<number>(40); // ~1fr of 1fr/1.5fr
@@ -184,6 +192,8 @@ const Layout: React.FC<LayoutProps> = ({
             currentFolder={appState.currentFolder}
             isLoading={appState.isFileLoading}
             onNavigateToFolder={onNavigateToFolder}
+            totalFilesCount={appState.totalFilesCount}
+            onRefreshSubfolders={onRefreshSubfolders}
           />
         </div>
       </div>

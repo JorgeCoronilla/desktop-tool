@@ -56,4 +56,6 @@ export interface AppState {
   isChatLoading: boolean;
   isFileLoading: boolean;
   taskContext: TaskContext;
+  lastUpdate?: number;
+  totalFilesCount?: number;
 }

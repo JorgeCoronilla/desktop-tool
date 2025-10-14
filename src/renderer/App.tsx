@@ -9,40 +9,29 @@ import {
   OpenAIConfig,
   TaskState,
 } from '../types/global';
-import { toolManager, ToolCall, ToolResponse } from '../tools/toolManager';
+import { SecureMCPServiceWrapper, MCPServiceWrapper } from '../services/mcpServiceWrapper';
+import { MCPMessage, MCPStreamChunk } from '../services/mcpService';
 
-const SYSTEM_PROMPT = `Eres un asistente amigable para gestión de archivos y documentos. Usa el sistema de estado de tareas para gestionar el flujo.
+const SYSTEM_PROMPT = `Eres un asistente amigable para gestión de archivos y documentos. Ayudas al usuario con tareas de gestión de archivos, lectura de documentos PDF, manipulación de Excel y más.
 
-FORMATO OBLIGATORIO:
-[TOOL:nombre_herramienta]({"parametro":"valor"})
+Tienes acceso a herramientas MCP que se ejecutan automáticamente cuando las necesites. Simplemente describe lo que quieres hacer y las herramientas se ejecutarán automáticamente.
 
-FLUJO DE ESTADO DE TAREAS - EJECUTA TODO EN UNA SOLA RESPUESTA:
-1. Siempre inicia con [TOOL:get_task_state]() para verificar el estado actual
-2. Si está IDLE, actualiza a IN_PROGRESS: [TOOL:update_task_state]({"state":"IN_PROGRESS"})
-3. Ejecuta las herramientas necesarias para completar la tarea
-4. Al finalizar, actualiza a COMPLETED: [TOOL:update_task_state]({"state":"COMPLETED"})
+REGLAS IMPORTANTES:
+- Sé amigable y útil en tus respuestas
+- Usa rutas absolutas cuando sea posible
+- Explica lo que estás haciendo
+- Las herramientas se ejecutan automáticamente, no necesitas formato JSON especial
 
-REGLAS CRÍTICAS:
-- EJECUTA TODAS LAS HERRAMIENTAS EN UNA SOLA RESPUESTA
-- USA <CWD> para rutas de archivos
-- JSON válido con comillas dobles
-- Sigue SIEMPRE el flujo de estados COMPLETO
-- NO te detengas hasta completar TODA la secuencia
-- Para update_task_state: solo 'state' es requerido, otros parámetros son opcionales
-- Una tarea está completa cuando el estado es COMPLETED
-- Muestra mensajes amigables y útiles al usuario, evita información técnica innecesaria
-
-EJEMPLO COMPLETO para "Crea archivo jorge con lista de acciones":
-[TOOL:get_task_state]()
-[TOOL:update_task_state]({"state":"IN_PROGRESS"})
-[TOOL:write_text_file]({"filePath":"<CWD>/jorge.txt","content":"Lista de acciones disponibles:\n1. Leer archivos\n2. Escribir archivos\n3. Crear directorios\n4. Eliminar archivos\n5. Copiar archivos\n6. Mover archivos\n7. Listar directorios"})
-[TOOL:update_task_state]({"state":"COMPLETED"})
-
-IMPORTANTE: Ejecuta TODAS estas herramientas en tu respuesta. El bucle se detiene automáticamente cuando el estado es COMPLETED.`;
+EJEMPLO:
+Usuario: "Crea un archivo llamado notas.txt con el contenido 'Hola mundo'"
+Asistente: Voy a crear el archivo notas.txt para ti con el contenido que solicitas.`;
 
 const App: React.FC = () => {
   console.log('App component rendering...');
   console.log('window.electronAPI:', window.electronAPI);
+
+  // Instancia del MCPService real
+  const [mcpService, setMcpService] = useState<MCPServiceWrapper | null>(null);
 
   const [appState, setAppState] = useState<AppState>({
     currentFolder: null,
@@ -58,6 +47,7 @@ const App: React.FC = () => {
       lastAction: '',
       needsConfirmation: false,
     },
+    totalFilesCount: 0,
   });
 
   const [openaiConfig, setOpenaiConfig] = useState<OpenAIConfig | null>(null);
@@ -65,14 +55,39 @@ const App: React.FC = () => {
   const [tokenLimit, setTokenLimit] = useState<number>(4000);
   const [abortController, setAbortController] =
     useState<AbortController | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    toolName: string;
+    args: Record<string, any>;
+    message: string;
+    originalMessages: any[];
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
+
+  // Helper: refrescar el árbol si alguna herramienta modifica el sistema de archivos
+
 
   // Verificar configuración de OpenAI al cargar
   useEffect(() => {
     const checkOpenAIConfig = async () => {
+      // Inicializar MCPService
+      try {
+        // Usar el wrapper seguro que no expone la API key
+        const service = new SecureMCPServiceWrapper();
+        const isInitialized = await service.isInitialized();
+        if (isInitialized) {
+          setMcpService(service);
+          console.log('MCPService inicializado correctamente');
+        } else {
+          console.warn('MCPService no pudo inicializarse');
+        }
+      } catch (error) {
+        console.error('Error inicializando MCPService:', error);
+      }
+
       // Si estamos en preview del navegador, window.electronAPI no existe
       if (!(window as any).electronAPI) {
         console.warn('electronAPI no disponible: ejecutando en modo web');
-        const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+        const model = process.env.OPENAI_MODEL || 'gpt-4o';
         // En modo web usaremos un proxy backend local en lugar de exponer API key
         setOpenaiConfig({ hasApiKey: true, model, isInitialized: true });
         setIsOpenAIInitialized(true);
@@ -183,6 +198,73 @@ const App: React.FC = () => {
     checkOpenAIConfig();
   }, []);
 
+  // File watcher effect
+  useEffect(() => {
+    if (!(window as any).electronAPI || !appState.currentFolder) {
+      return;
+    }
+
+    const startWatcher = async () => {
+      try {
+        console.log('[DEBUG] Starting file watcher for:', appState.currentFolder);
+        await window.electronAPI.startFileWatcher(appState.currentFolder);
+        console.log('[DEBUG] File watcher started successfully');
+      } catch (error) {
+        console.error('[DEBUG] Error starting file watcher:', error);
+      }
+    };
+
+    // Listen for file system changes
+    const handleFileSystemChange = (event: any, changeData: any) => {
+      console.log('[DEBUG] File system change detected:', changeData);
+      // Refresh the current folder when changes are detected
+      refreshCurrentFolderIfChanged();
+    };
+
+    // Add event listener for file system changes
+    if ((window as any).electronAPI && typeof (window as any).electronAPI.on === 'function') {
+      (window as any).electronAPI.on('file-system-change', handleFileSystemChange);
+    } else {
+      // Fallback: use ipcRenderer directly if available
+      const { ipcRenderer } = window.require('electron');
+      if (ipcRenderer) {
+        ipcRenderer.on('file-system-change', handleFileSystemChange);
+      }
+    }
+
+    startWatcher();
+
+    // Cleanup function
+    return () => {
+      const cleanup = async () => {
+        try {
+          console.log('[DEBUG] Stopping file watcher');
+          await window.electronAPI.stopFileWatcher();
+          console.log('[DEBUG] File watcher stopped');
+        } catch (error) {
+          console.error('[DEBUG] Error stopping file watcher:', error);
+        }
+      };
+
+      // Remove event listener
+      if ((window as any).electronAPI && typeof (window as any).electronAPI.off === 'function') {
+        (window as any).electronAPI.off('file-system-change', handleFileSystemChange);
+      } else {
+        // Fallback: use ipcRenderer directly if available
+        try {
+          const { ipcRenderer } = window.require('electron');
+          if (ipcRenderer) {
+            ipcRenderer.removeListener('file-system-change', handleFileSystemChange);
+          }
+        } catch (e) {
+          console.warn('[DEBUG] Could not remove ipcRenderer listener:', e);
+        }
+      }
+
+      cleanup();
+    };
+  }, [appState.currentFolder]);
+
   const handleFolderSelect = async () => {
     try {
       setAppState(prev => ({ ...prev, isFileLoading: true }));
@@ -205,10 +287,12 @@ const App: React.FC = () => {
 
       if (folderPath) {
         const files = await window.electronAPI.readDirectory(folderPath);
+        const totalFilesCount = await window.electronAPI.countFilesRecursively(folderPath);
         setAppState(prev => ({
           ...prev,
           currentFolder: folderPath,
           files,
+          totalFilesCount,
           isFileLoading: false,
         }));
       } else {
@@ -239,10 +323,12 @@ const App: React.FC = () => {
         return;
       }
       const files = await window.electronAPI.readDirectory(folderPath);
+      const totalFilesCount = await window.electronAPI.countFilesRecursively(folderPath);
       setAppState(prev => ({
         ...prev,
         currentFolder: folderPath,
         files,
+        totalFilesCount,
         isFileLoading: false,
       }));
     } catch (error) {
@@ -261,6 +347,20 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = async (content: string) => {
+    if (!mcpService) {
+      const errorMessage: ChatMessage = {
+        id: Date.now().toString(),
+        content: '❌ MCPService no está inicializado. Por favor, recarga la aplicación.',
+        role: 'assistant',
+        timestamp: new Date(),
+      };
+      setAppState(prev => ({
+        ...prev,
+        chatMessages: [...prev.chatMessages, errorMessage],
+      }));
+      return;
+    }
+
     const newMessage: ChatMessage = {
       id: Date.now().toString(),
       content,
@@ -274,399 +374,154 @@ const App: React.FC = () => {
       isChatLoading: true,
     }));
 
-    // Atajo: si el usuario escribe solo "confirm", ejecutamos la última llamada destructiva pendiente
-    const isConfirmOnly = (content || '').trim().toLowerCase() === 'confirm';
-    if (isConfirmOnly) {
-      try {
-        const { processedMessage, toolCalls, responses } =
-          await toolManager.processLLMMessage('confirm', {
-            cwd: appState.currentFolder || undefined,
-          });
-        const finalContent =
-          processedMessage && processedMessage.trim().length > 0
-            ? processedMessage
-            : 'Lo siento, no puedo ayudarte.';
-        const assistantMessage: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          content: finalContent,
-          role: 'assistant',
-          timestamp: new Date(),
-        };
-        setAppState(prev => ({
-          ...prev,
-          chatMessages: [...prev.chatMessages, assistantMessage],
-          isChatLoading: false,
-        }));
-        await refreshCurrentFolderIfChanged(toolCalls, responses);
-        return;
-      } catch (e) {
-        const errorMessage: ChatMessage = {
-          id: (Date.now() + 2).toString(),
-          content: `❌ Error al confirmar: ${e instanceof Error ? e.message : 'Error desconocido'}`,
-          role: 'assistant',
-          timestamp: new Date(),
-        };
-        setAppState(prev => ({
-          ...prev,
-          chatMessages: [...prev.chatMessages, errorMessage],
-          isChatLoading: false,
-        }));
-        return;
-      }
-    }
-
-    // Helper: refrescar el árbol si alguna herramienta modifica el sistema de archivos
-    async function refreshCurrentFolderIfChanged(
-      toolCalls: ToolCall[],
-      responses: ToolResponse[]
-    ) {
-      try {
-        if (!(window as any).electronAPI) return; // Solo aplica en Electron
-        if (!appState.currentFolder) return;
-        const mutateSet = new Set([
-          'create_directory',
-          'delete_file_or_directory',
-          'move_file_or_directory',
-          'copy_file_or_directory',
-          'write_text_file',
-          'write_excel',
-          'modify_excel',
-        ]);
-        const shouldRefresh = responses.some((res, i) => {
-          const call = toolCalls[i];
-          return res.success && !!call && mutateSet.has(call.name);
-        });
-        if (shouldRefresh) {
-          const files = await window.electronAPI.readDirectory(
-            appState.currentFolder
-          );
-          setAppState(prev => ({ ...prev, files }));
-        }
-      } catch (e) {
-        // noop
-      }
-    }
-
     try {
-      // Si estamos en preview del navegador, no hay electronAPI disponible
-      if (!(window as any).electronAPI) {
-        const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
-
-        // Convertir mensajes al formato de OpenAI + prompt de sistema
-        const toolsDoc = toolManager.generateToolsDocumentation();
-        console.log('🔧 DEBUG: Documentación de herramientas:', toolsDoc);
-        const openaiMessages = [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'system', content: toolsDoc },
+        // Convertir mensajes al formato MCPMessage
+        const mcpMessages = [
+          { role: 'system' as const, content: SYSTEM_PROMPT },
           ...(appState.currentFolder
-            ? [
-                {
-                  role: 'system',
-                  content: `Carpeta de trabajo actual: ${appState.currentFolder}`,
-                },
-              ]
+            ? [{ role: 'system' as const, content: `Carpeta de trabajo actual: ${appState.currentFolder}` }]
             : []),
-          ...[...appState.chatMessages, newMessage].map(msg => ({
-            role: msg.role,
+          ...appState.chatMessages.map(msg => ({
+            role: msg.role as 'user' | 'assistant',
             content: msg.content,
           })),
+          { role: 'user' as const, content },
         ];
-        
-        console.log('📤 DEBUG: Mensajes enviados a OpenAI:', openaiMessages);
 
-        try {
-          // Crear mensaje del asistente vacío para ir rellenando con el stream
-          const assistantId = (Date.now() + 1).toString();
-          const assistantInitial: ChatMessage = {
-            id: assistantId,
-            content: '',
-            role: 'assistant',
-            timestamp: new Date(),
-          };
-          setAppState(prev => ({
-            ...prev,
-            chatMessages: [...prev.chatMessages, assistantInitial],
-          }));
-          const controller = new AbortController();
-          setAbortController(controller);
-          const res = await fetch('http://localhost:4000/api/chat-stream', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model,
-              messages: openaiMessages,
-              maxTokens: tokenLimit,
-            }),
-            signal: controller.signal,
+      // Crear mensaje del asistente vacío para streaming
+      const assistantId = (Date.now() + 1).toString();
+      const assistantInitial: ChatMessage = {
+        id: assistantId,
+        content: '',
+        role: 'assistant',
+        timestamp: new Date(),
+      };
+      
+      setAppState(prev => ({
+        ...prev,
+        chatMessages: [...prev.chatMessages, assistantInitial],
+      }));
+
+      // Usar MCPService
+      const response = await mcpService.sendMessage(mcpMessages, {
+        currentFolder: appState.currentFolder || undefined,
+      });
+
+      // Verificar si se necesita confirmación
+      console.log('[DEBUG] Checking for confirmation need:', !!response.needsConfirmation);
+      if (response.needsConfirmation) {
+        console.log('[DEBUG] Confirmation needed for:', response.needsConfirmation.toolName);
+        console.log('[DEBUG] Confirmation message:', response.needsConfirmation.message);
+        
+        // Mostrar modal de confirmación
+        const confirmed = await new Promise<boolean>((resolve) => {
+          setPendingConfirmation({
+            toolName: response.needsConfirmation.toolName,
+            args: response.needsConfirmation.args,
+            message: response.needsConfirmation.message,
+            originalMessages: mcpMessages,
+            resolve
+          });
+        });
+
+        // Limpiar el estado de confirmación
+        setPendingConfirmation(null);
+
+        if (confirmed) {
+          // Si se confirma, reenviar el mensaje con confirmación
+          const confirmedResponse = await mcpService.sendMessage([
+            ...mcpMessages,
+            { role: 'user' as const, content: `CONFIRMADO: Proceder con ${response.needsConfirmation.toolName}` }
+          ], {
+            currentFolder: appState.currentFolder || undefined,
           });
 
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
-
-          const reader = res.body?.getReader();
-          const decoder = new TextDecoder();
-          let accumulated = '';
-
-          if (reader) {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const chunk = decoder.decode(value, { stream: true });
-              accumulated += chunk;
-              // Actualizar el último mensaje del asistente con el contenido acumulado
-              setAppState(prev => {
-                const msgs = [...prev.chatMessages];
-                const idx = msgs.findIndex(m => m.id === assistantId);
-                if (idx >= 0) {
-                  msgs[idx] = { ...msgs[idx], content: accumulated };
-                }
-                return { ...prev, chatMessages: msgs };
-              });
-            }
-          } else {
-            // Fallback si el navegador no soporta streams en fetch
-            const text = await res.text();
-            accumulated = text;
-            setAppState(prev => {
-              const msgs = [...prev.chatMessages];
-              const idx = msgs.findIndex(m => m.id === assistantId);
-              if (idx >= 0) {
-                msgs[idx] = { ...msgs[idx], content: accumulated };
-              }
-              return { ...prev, chatMessages: msgs };
-            });
-          }
-
-          // Postprocesar la respuesta del asistente para ejecutar herramientas si las solicitó
-          console.log('[App] Respuesta completa del LLM:', accumulated);
-          const { processedMessage, toolCalls, responses } =
-            await toolManager.processLLMMessage(accumulated, {
-              cwd: appState.currentFolder || undefined,
-            });
+          // Actualizar con la respuesta confirmada
           setAppState(prev => {
             const msgs = [...prev.chatMessages];
             const idx = msgs.findIndex(m => m.id === assistantId);
             if (idx >= 0) {
-              const finalContent =
-                processedMessage && processedMessage.trim().length > 0
-                  ? processedMessage
-                  : 'Lo siento, no puedo ayudarte.';
-              msgs[idx] = { ...msgs[idx], content: finalContent };
+              msgs[idx] = { ...msgs[idx], content: confirmedResponse.content };
             }
             return { ...prev, chatMessages: msgs };
           });
 
-          // En modo web normalmente no hay electronAPI; el helper hará guardas
-          await refreshCurrentFolderIfChanged(toolCalls, responses);
-
-          setAppState(prev => ({ ...prev, isChatLoading: false }));
-          setAbortController(null);
-          return;
-        } catch (err) {
-          const errorMessage: ChatMessage = {
-            id: (Date.now() + 2).toString(),
-            content: `❌ Error al llamar a OpenAI en web: ${err instanceof Error ? err.message : 'Error desconocido'}`,
-            role: 'assistant',
-            timestamp: new Date(),
-          };
-          setAppState(prev => ({
-            ...prev,
-            chatMessages: [...prev.chatMessages, errorMessage],
-            isChatLoading: false,
-          }));
-          setAbortController(null);
-          return;
-        }
-      }
-
-      if (!isOpenAIInitialized) {
-        // Si OpenAI no está inicializado, mostrar mensaje de configuración
-        const configMessage: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          content: `❌ OpenAI no está configurado. 
-
-Para usar el chat con IA, necesitas:
-1. Agregar tu API key de OpenAI al archivo .env
-2. Reiniciar la aplicación
-
-Archivo .env debe contener:
-OPENAI_API_KEY=tu_api_key_aqui
-OPENAI_MODEL=gpt-3.5-turbo
-
-${openaiConfig?.hasApiKey ? 'API key detectada pero hay un error de inicialización.' : 'No se encontró API key en las variables de entorno.'}`,
-          role: 'assistant',
-          timestamp: new Date(),
-        };
-
-        setAppState(prev => ({
-          ...prev,
-          chatMessages: [...prev.chatMessages, configMessage],
-          isChatLoading: false,
-        }));
-        return;
-      }
-
-      // Convertir mensajes al formato de OpenAI con tipado explícito
-      const historyMessages: PreloadChatMessage[] =
-        appState.chatMessages.map<PreloadChatMessage>(msg => ({
-          role: msg.role,
-          content: msg.content,
-        }));
-
-      const toolsDoc = toolManager.generateToolsDocumentation();
-      const openaiMessages: PreloadChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT } as PreloadChatMessage,
-        { role: 'system', content: toolsDoc } as PreloadChatMessage,
-        ...(appState.currentFolder
-          ? [
-              {
-                role: 'system',
-                content: `Carpeta de trabajo actual: ${appState.currentFolder}`,
-              } as PreloadChatMessage,
-            ]
-          : []),
-        ...historyMessages,
-      ];
-
-      // Agregar el nuevo mensaje del usuario
-      openaiMessages.push({ role: 'user', content } as PreloadChatMessage);
-
-      // Orquestación simplificada: usar sistema de estado de tareas
-      const userGoal = content;
-      let iteration = 0;
-      let continueLoop = true;
-      let lastMessages = openaiMessages.slice();
-      let finalAssistantContent = '';
-
-      console.log(`🔍 DEBUG: Iniciando nueva solicitud "${userGoal}" con sistema de estado`);
-
-      while (continueLoop && iteration < 10) {
-        console.log(`🔍 DEBUG: Enviando mensajes a OpenAI (iteración ${iteration}):`, lastMessages);
-        const response =
-          await window.electronAPI.sendMessageToOpenAI(lastMessages);
-        
-        console.log(`🔍 DEBUG: Respuesta COMPLETA de OpenAI:`, JSON.stringify(response, null, 2));
-        console.log(`🔍 DEBUG: Contenido de la respuesta:`, response?.response || 'SIN CONTENIDO');
-        
-        let responseContent = '';
-        if (response.success && response.response) {
-          responseContent = response.response;
-          console.log(`🔍 DEBUG: Respuesta del LLM (iteración ${iteration}):`, responseContent);
-        } else {
-          responseContent = `❌ Error al obtener respuesta: ${response.message || 'Error desconocido'}`;
-          console.log(`🔍 DEBUG: Error en respuesta del LLM:`, response);
-        }
-
-        const { processedMessage, toolCalls, responses } =
-          await toolManager.processLLMMessage(responseContent, {
-            cwd: appState.currentFolder || undefined,
+          // Refrescar la carpeta si se ejecutaron herramientas
+          console.log('[DEBUG] Confirmed response:', {
+            hasContent: !!confirmedResponse.content,
+            hasToolCalls: !!confirmedResponse.toolCalls,
+            toolCallsLength: confirmedResponse.toolCalls?.length || 0,
+            toolCalls: confirmedResponse.toolCalls?.map(tc => tc.name) || []
           });
-
-        const finalContent =
-          processedMessage && processedMessage.trim().length > 0
-            ? processedMessage
-            : 'Lo siento, no puedo ayudarte.';
-
-        await refreshCurrentFolderIfChanged(toolCalls, responses);
-
-        // Actualizar el contenido final del asistente
-        finalAssistantContent = finalContent;
-
-        // Obtener el estado actual de la tarea desde las herramientas ejecutadas
-        let currentTaskState = TaskState.IDLE;
-        let needsConfirmation = false;
-        
-        // Buscar si se ejecutó get_task_state o update_task_state
-         for (let i = 0; i < toolCalls.length; i++) {
-           const toolCall = toolCalls[i];
-           const response = responses[i];
-           
-           console.log(`🔍 DEBUG: Herramienta: ${toolCall.name}, Response:`, response);
-           
-           if (toolCall.name === 'get_task_state' && response.success && response.result && response.result.data) {
-             currentTaskState = response.result.data.state;
-             needsConfirmation = response.result.data.needsConfirmation || false;
-             console.log(`🔍 DEBUG: Estado obtenido: ${currentTaskState}, Confirmación: ${needsConfirmation}`);
-           } else if (toolCall.name === 'update_task_state' && response.success) {
-             // El estado se actualizó, usar el estado del parámetro
-             currentTaskState = toolCall.parameters.state as TaskState;
-             needsConfirmation = toolCall.parameters.needsConfirmation || false;
-             console.log(`🔍 DEBUG: Estado actualizado: ${currentTaskState}, Confirmación: ${needsConfirmation}`);
-           }
-         }
-
-        // Lógica corregida de continuación basada en el estado
-        const shouldStop = 
-          currentTaskState === TaskState.COMPLETED ||
-          currentTaskState === TaskState.FAILED ||
-          currentTaskState === TaskState.AWAITING_CONFIRMATION;
-
-        const shouldContinue = 
-          (currentTaskState === TaskState.IN_PROGRESS && toolCalls.length > 0) ||
-          (currentTaskState === TaskState.IDLE && iteration <= 2); // Permitir múltiples iteraciones cuando está idle para procesar la tarea
-
-        console.log(`🔍 DEBUG: Iteración ${iteration} - Estado: ${currentTaskState}, Continuar: ${shouldContinue}, Parar: ${shouldStop}`);
-
-        if (shouldStop) {
-          console.log(`🔍 DEBUG: Deteniendo loop - Estado: ${currentTaskState}`);
-          continueLoop = false;
-          break;
+          
+          if (confirmedResponse.toolCalls && confirmedResponse.toolCalls.length > 0) {
+            console.log('[DEBUG] Tool calls detected in confirmed response, applying 500ms delay...');
+            // Agregar un pequeño delay para permitir que las operaciones de archivo se completen
+            setTimeout(async () => {
+              console.log('[DEBUG] Refreshing folder after 500ms delay...');
+              await refreshCurrentFolderIfChanged();
+            }, 500);
+          } else {
+            console.log('[DEBUG] No tool calls in confirmed response, applying 500ms delay anyway...');
+            setTimeout(async () => {
+              console.log('[DEBUG] Refreshing folder after 500ms delay (no tool calls)...');
+              await refreshCurrentFolderIfChanged();
+            }, 500);
+          }
+        } else {
+          // Si se cancela, mostrar mensaje de cancelación
+          setAppState(prev => {
+            const msgs = [...prev.chatMessages];
+            const idx = msgs.findIndex(m => m.id === assistantId);
+            if (idx >= 0) {
+              msgs[idx] = { ...msgs[idx], content: response.content };
+            }
+            return { ...prev, chatMessages: msgs };
+          });
         }
+      } else {
+        // Actualizar con la respuesta final
+        setAppState(prev => {
+          const msgs = [...prev.chatMessages];
+          const idx = msgs.findIndex(m => m.id === assistantId);
+          if (idx >= 0) {
+            msgs[idx] = { ...msgs[idx], content: response.content };
+          }
+          return { ...prev, chatMessages: msgs };
+        });
 
-        if (!shouldContinue) {
-          console.log(`🔍 DEBUG: No hay más acciones que realizar - Estado: ${currentTaskState}`);
-          continueLoop = false;
-          break;
-        }
-
-        // Preparar siguiente iteración
-        const historyMessagesNext: PreloadChatMessage[] =
-          appState.chatMessages.map<PreloadChatMessage>(msg => ({
-            role: msg.role,
-            content: msg.content,
-          }));
+        // Refrescar la carpeta si se ejecutaron herramientas que modifican archivos
+        console.log('[DEBUG] Response from MCP:', {
+          hasContent: !!response.content,
+          hasToolCalls: !!response.toolCalls,
+          toolCallsLength: response.toolCalls?.length || 0,
+          hasNeedsConfirmation: !!response.needsConfirmation,
+          toolCalls: response.toolCalls || 'none'
+        });
         
-        lastMessages = [
-          { role: 'system', content: SYSTEM_PROMPT } as PreloadChatMessage,
-          { role: 'system', content: toolsDoc } as PreloadChatMessage,
-          ...(appState.currentFolder
-            ? [
-                {
-                  role: 'system',
-                  content: `Carpeta de trabajo actual: ${appState.currentFolder}`,
-                } as PreloadChatMessage,
-              ]
-            : []),
-          ...historyMessagesNext,
-          { role: 'user', content: userGoal } as PreloadChatMessage,
-          { role: 'assistant', content: finalContent } as PreloadChatMessage,
-        ];
-        iteration += 1;
+        if (response.toolCalls && response.toolCalls.length > 0) {
+          console.log('[DEBUG] Tool calls detected:', response.toolCalls.map(tc => tc.name));
+          console.log('[DEBUG] Applying 500ms delay before refreshing folder...');
+          // Agregar un pequeño delay para permitir que las operaciones de archivo se completen
+          setTimeout(async () => {
+            console.log('[DEBUG] Refreshing folder after 500ms delay (general response)...');
+            await refreshCurrentFolderIfChanged();
+          }, 500);
+        } else {
+          console.log('[DEBUG] No tool calls detected, applying 500ms delay anyway for testing...');
+          setTimeout(async () => {
+            console.log('[DEBUG] Refreshing folder after 500ms delay (no tool calls - general)...');
+            await refreshCurrentFolderIfChanged();
+          }, 500);
+        }
       }
 
-      console.log(`🔍 DEBUG: Loop completado después de ${iteration} iteraciones`);
-      const assistantMessageFinal: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        content:
-          finalAssistantContent.length > 0
-            ? finalAssistantContent
-            : 'Lo siento, no puedo ayudarte.',
-        role: 'assistant',
-        timestamp: new Date(),
-      };
-
-      setAppState(prev => ({
-        ...prev,
-        chatMessages: [...prev.chatMessages, assistantMessageFinal],
-        isChatLoading: false,
-      }));
+      setAppState(prev => ({ ...prev, isChatLoading: false }));
     } catch (error) {
+      console.error('Error en handleSendMessage:', error);
+      
       const errorMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+        id: (Date.now() + 2).toString(),
         content: `❌ Error al procesar el mensaje: ${error instanceof Error ? error.message : 'Error desconocido'}`,
         role: 'assistant',
         timestamp: new Date(),
@@ -680,42 +535,159 @@ ${openaiConfig?.hasApiKey ? 'API key detectada pero hay un error de inicializaci
     }
   };
 
-  const handleCancelStream = () => {
+  // Helper: refrescar el árbol si se ejecutaron herramientas que modifican archivos
+  const refreshCurrentFolderIfChanged = async () => {
     try {
-      if (abortController) {
-        abortController.abort();
-        setAbortController(null);
-      }
-      // Limpiar cualquier operación pendiente en el toolManager
-      toolManager.clearPendingOperations();
+      console.log('[DEBUG] refreshCurrentFolderIfChanged called');
+      console.log('[DEBUG] electronAPI available:', !!(window as any).electronAPI);
+      console.log('[DEBUG] currentFolder:', appState.currentFolder);
       
-      setAppState(prev => ({ ...prev, isChatLoading: false }));
-      const msg: ChatMessage = {
-        id: (Date.now() + 3).toString(),
-        content: '✅ Operación cancelada por el usuario.',
-        role: 'assistant',
-        timestamp: new Date(),
-      };
-      setAppState(prev => ({
-        ...prev,
-        chatMessages: [...prev.chatMessages, msg],
+      if (!(window as any).electronAPI) {
+        console.log('[DEBUG] No electronAPI available, skipping refresh');
+        return; // Solo aplica en Electron
+      }
+      if (!appState.currentFolder) {
+        console.log('[DEBUG] No currentFolder set, skipping refresh');
+        return;
+      }
+      
+      console.log('[DEBUG] Reading directory:', appState.currentFolder);
+      const files = await window.electronAPI.readDirectory(appState.currentFolder);
+      console.log('[DEBUG] Directory read successful, files count:', files.length);
+      console.log('[DEBUG] Files found:', files.map(f => f.name));
+      
+      // Obtener conteo recursivo total
+      let totalFilesCount = 0;
+      try {
+        console.log('[DEBUG] Calling countFilesRecursively...');
+        totalFilesCount = await window.electronAPI.countFilesRecursively(appState.currentFolder);
+        console.log('[DEBUG] Total files recursively:', totalFilesCount);
+      } catch (countError) {
+        console.error('[DEBUG] Error calling countFilesRecursively:', countError);
+        // Fallback al conteo local si falla
+        totalFilesCount = files.length;
+      }
+      
+      // Forzar nueva referencia del array para que React detecte el cambio
+      const newFiles = [...files];
+      setAppState(prev => ({ 
+        ...prev, 
+        files: newFiles,
+        totalFilesCount: totalFilesCount,
+        // También forzar actualización con timestamp para garantizar re-render
+        lastUpdate: Date.now()
       }));
+      console.log('[DEBUG] App state updated with new files and total count (forced new reference)');
+      
+      // También refrescar las subcarpetas expandidas
+      console.log('[DEBUG] Refreshing expanded subfolders...');
+      handleRefreshSubfolders();
     } catch (e) {
-      // noop
+      console.error('[DEBUG] Error in refreshCurrentFolderIfChanged:', e);
+    }
+  };
+
+  const handleCancelStream = () => {
+    setAppState(prev => ({ ...prev, isChatLoading: false }));
+  };
+
+  const handleConfirmOperation = () => {
+    if (pendingConfirmation) {
+      pendingConfirmation.resolve(true);
+    }
+  };
+
+  const handleCancelOperation = () => {
+    if (pendingConfirmation) {
+      pendingConfirmation.resolve(false);
+    }
+  };
+
+  const handleRefreshSubfolders = () => {
+    console.log('[DEBUG] handleRefreshSubfolders called');
+    // Llamar a la función expuesta por FileExplorer
+    if ((window as any).__refreshExpandedFolders) {
+      console.log('[DEBUG] Calling __refreshExpandedFolders');
+      (window as any).__refreshExpandedFolders();
+    } else {
+      console.log('[DEBUG] __refreshExpandedFolders not available');
     }
   };
 
   return (
-    <Layout
-      appState={appState}
-      onFolderSelect={handleFolderSelect}
-      onSendMessage={handleSendMessage}
-      onCancelStream={handleCancelStream}
-      tokenLimit={tokenLimit}
-      onChangeTokenLimit={setTokenLimit}
-      onNavigateToFolder={handleNavigateToFolder}
-      onNavigateBack={handleNavigateBack}
-    />
+    <>
+      <Layout
+        appState={appState}
+        onFolderSelect={handleFolderSelect}
+        onSendMessage={handleSendMessage}
+        onCancelStream={handleCancelStream}
+        tokenLimit={tokenLimit}
+        onChangeTokenLimit={setTokenLimit}
+        onNavigateToFolder={handleNavigateToFolder}
+        onNavigateBack={handleNavigateBack}
+        onRefreshSubfolders={handleRefreshSubfolders}
+      />
+      
+      {/* Modal de confirmación */}
+      {pendingConfirmation && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            padding: '24px',
+            borderRadius: '8px',
+            maxWidth: '500px',
+            width: '90%',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+          }}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#333' }}>
+              Confirmación requerida
+            </h3>
+            <p style={{ margin: '0 0 24px 0', color: '#666', lineHeight: '1.5' }}>
+              {pendingConfirmation.message}
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleCancelOperation}
+                style={{
+                  padding: '8px 16px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  color: '#666',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmOperation}
+                style={{
+                  padding: '8px 16px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  backgroundColor: '#dc3545',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

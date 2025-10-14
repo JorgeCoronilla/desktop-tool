@@ -5,7 +5,7 @@ const OpenAI = require('openai');
 
 const PORT = process.env.PORT || 4000;
 const API_KEY = process.env.OPENAI_API_KEY || '';
-const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
 if (!API_KEY) {
   console.warn('[proxy] OPENAI_API_KEY no definido en entorno. Define en .env y reinicia.');
@@ -46,8 +46,8 @@ const server = http.createServer(async (req, res) => {
         const completion = await client.chat.completions.create({
           model,
           messages,
-          temperature: 0.7,
-          max_tokens: maxTokens,
+          temperature: 1,
+          max_completion_tokens: maxTokens,
         });
 
         const content = completion.choices?.[0]?.message?.content || '';
@@ -81,8 +81,8 @@ const server = http.createServer(async (req, res) => {
         const stream = await client.chat.completions.create({
           model,
           messages,
-          temperature: 0.7,
-          max_tokens: maxTokens,
+          temperature: 1,
+          max_completion_tokens: maxTokens,
           stream: true,
         });
 

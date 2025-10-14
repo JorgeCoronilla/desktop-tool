@@ -78,7 +78,7 @@ module.exports = (envArgs, argv) => {
       new webpack.DefinePlugin({
         global: 'globalThis',
         'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY || ''),
-        'process.env.OPENAI_MODEL': JSON.stringify(env.OPENAI_MODEL || 'gpt-3.5-turbo'),
+        'process.env.OPENAI_MODEL': JSON.stringify(env.OPENAI_MODEL || 'gpt-4o'),
       }),
       ...(isDev ? [new ReactRefreshWebpackPlugin()] : []),
     ],
