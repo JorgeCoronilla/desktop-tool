@@ -392,18 +392,50 @@ const App: React.FC = () => {
       return;
     }
 
-    // Verificar si se requiere una carpeta seleccionada para operaciones con archivos
-    const requiresFolderKeywords = [
-      'crear', 'crear archivo', 'crear carpeta', 'escribir', 'guardar', 'archivo',
-      'leer', 'abrir', 'modificar', 'editar', 'eliminar', 'borrar', 'mover',
-      'copiar', 'renombrar', 'listar', 'buscar', 'encontrar', 'pdf', 'excel',
-      'txt', 'documento', 'carpeta', 'directorio', 'folder'
-    ];
-    
-    const contentLower = content.toLowerCase();
-    const requiresFolder = requiresFolderKeywords.some(keyword => 
-      contentLower.includes(keyword)
-    );
+    // Verificar si se requiere una carpeta seleccionada usando análisis inteligente
+    const checkIfRequiresFolder = async (userMessage: string): Promise<boolean> => {
+      // Si ya hay una carpeta seleccionada, no necesitamos validar
+      if (appState.currentFolder) return false;
+      
+      try {
+        // Usar OpenAI para determinar si la solicitud requiere operaciones con archivos
+        const analysisPrompt = `Analiza el siguiente mensaje del usuario y determina si requiere operaciones con archivos o carpetas (crear, leer, escribir, modificar, eliminar, buscar archivos, etc.).
+
+Mensaje del usuario: "${userMessage}"
+
+Responde SOLO con "SI" si requiere operaciones con archivos/carpetas, o "NO" si es una pregunta general, conversación o no requiere acceso al sistema de archivos.
+
+Ejemplos:
+- "Crea un archivo de texto" → SI
+- "Lee el PDF que está en la carpeta" → SI  
+- "¿Cómo estás?" → NO
+- "Explícame qué es Python" → NO
+- "Busca archivos Excel" → SI
+- "Hola" → NO
+
+Respuesta:`;
+
+        const response = await window.electronAPI.sendMessageToOpenAI([
+           { id: Date.now().toString(), role: 'user', content: analysisPrompt, timestamp: new Date() }
+         ]);
+
+         if (!response.success || !response.response) {
+           throw new Error('OpenAI response failed');
+         }
+
+         const result = response.response.trim().toUpperCase();
+         return result === 'SI' || result === 'YES' || result === 'SÍ';
+      } catch (error) {
+        console.error('[App] Error analyzing message for folder requirement:', error);
+        // En caso de error, usar una validación básica como fallback
+        const basicKeywords = ['file', 'archivo', 'crear', 'create', 'read', 'leer', 'write', 'escribir'];
+        return basicKeywords.some(keyword => 
+          userMessage.toLowerCase().includes(keyword)
+        );
+      }
+    };
+
+    const requiresFolder = await checkIfRequiresFolder(content);
 
     if (requiresFolder && !appState.currentFolder) {
       console.log('[App] File operation requested but no folder selected');
