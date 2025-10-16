@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as XLSX from 'xlsx';
 import { fromPath as pdfToPicFromPath } from 'pdf2pic';
 import { createWorker } from 'tesseract.js';
+import xlsxCalc from 'xlsx-calc';
 
 // Variables globales para pdf-parse
 let PDFParseClass: any = null;
@@ -12,7 +13,7 @@ let PDFParseClass: any = null;
 async function initializePdfParse() {
   if (!PDFParseClass) {
     const pdfParseModule = await import('pdf-parse');
-    PDFParseClass = (pdfParseModule as any).PDFParse || pdfParseModule.PDFParse;
+    PDFParseClass = pdfParseModule.default || pdfParseModule;
   }
   return PDFParseClass;
 }
@@ -69,11 +70,18 @@ export class ElectronMCPServer {
     this.registerTool('read_pdf', this.readPdf.bind(this));
     this.registerTool('read_pdf_chunk', this.readPdfChunk.bind(this));
     this.registerTool('ocr_pdf', this.ocrPdf.bind(this));
+    this.registerTool('read_pdf_smart', this.readPdfSmart.bind(this));
 
     // Herramientas de Excel
     this.registerTool('read_excel', this.readExcel.bind(this));
     this.registerTool('write_excel', this.writeExcel.bind(this));
     this.registerTool('modify_excel', this.modifyExcel.bind(this));
+    
+    // Herramientas de Excel con fórmulas
+    this.registerTool('read_excel_with_formulas', this.readExcelWithFormulas.bind(this));
+    this.registerTool('add_excel_formulas', this.addExcelFormulas.bind(this));
+    this.registerTool('calculate_excel_formulas', this.calculateExcelFormulas.bind(this));
+    this.registerTool('get_excel_formulas_info', this.getExcelFormulasInfo.bind(this));
   }
 
   private registerTool(name: string, handler: (args: any) => Promise<any>) {
@@ -223,8 +231,45 @@ export class ElectronMCPServer {
         }
       },
       {
+        name: 'read_pdf_smart',
+        description: 'USAR SIEMPRE PRIMERO: Herramienta principal para leer PDFs con estrategias inteligentes. Automáticamente elige la mejor estrategia (lectura directa o OCR) y permite optimizar rendimiento. Use "preview" para facturas/documentos cortos.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filePath: { type: 'string', description: 'Ruta del archivo PDF a leer' },
+            strategy: { 
+              type: 'string', 
+              enum: ['preview', 'full', 'pages', 'limit'],
+              description: 'Estrategia: "preview" (facturas/docs cortos, default), "full" (documento completo), "pages" (páginas específicas), "limit" (límite caracteres)',
+              default: 'preview'
+            },
+            pages: { 
+              type: 'array', 
+              items: { type: 'number' },
+              description: 'Páginas específicas a leer (solo con strategy="pages"). Ej: [1, 3, 5]'
+            },
+            maxPages: { 
+              type: 'number', 
+              description: 'Máximo páginas desde el inicio (strategy="preview"). Default: 3',
+              default: 3
+            },
+            maxCharacters: { 
+              type: 'number', 
+              description: 'Límite de caracteres (strategy="limit"). Default: 10000',
+              default: 10000
+            },
+            useOcr: { 
+              type: 'boolean', 
+              description: 'Forzar OCR aunque haya texto directo. Default: false',
+              default: false
+            }
+          },
+          required: ['filePath']
+        }
+      },
+      {
         name: 'read_pdf',
-        description: 'USAR SIEMPRE PRIMERO: Lee y extrae texto de cualquier archivo PDF. Esta es la herramienta principal para leer PDFs. Funciona con la mayoría de PDFs que contienen texto.',
+        description: 'HERRAMIENTA LEGACY: Lee texto básico de PDFs. Solo usar si read_pdf_smart no está disponible o falla.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -235,7 +280,7 @@ export class ElectronMCPServer {
       },
       {
         name: 'read_pdf_chunk',
-        description: 'Lee un fragmento específico de un PDF grande. Use esta herramienta cuando read_pdf indique que el PDF es muy grande y muestre chunks disponibles.',
+        description: 'HERRAMIENTA LEGACY: Lee fragmentos de PDFs grandes. Solo usar si read_pdf_smart no maneja PDFs grandes correctamente.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -248,7 +293,7 @@ export class ElectronMCPServer {
       },
       {
         name: 'ocr_pdf',
-        description: 'SOLO usar si read_pdf falla: OCR para PDFs escaneados como imágenes. NO usar para PDFs normales. Solo usar cuando read_pdf no puede extraer texto.',
+        description: 'HERRAMIENTA LEGACY: OCR directo para PDFs escaneados. Solo usar si read_pdf_smart con useOcr=true no funciona.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -271,40 +316,125 @@ export class ElectronMCPServer {
       },
       {
         name: 'write_excel',
-        description: 'Escribe datos a un archivo Excel',
+        description: 'Crea un archivo Excel con datos. IMPORTANTE: Siempre debes proporcionar el parámetro "data" con un array de objetos que representen las filas. Ejemplo: [{"Provincia": "Madrid", "Capital": "Madrid"}, {"Provincia": "Barcelona", "Capital": "Barcelona"}]',
         inputSchema: {
           type: 'object',
           properties: {
             filePath: { type: 'string', description: 'Ruta del archivo Excel a crear' },
             data: { 
               type: 'array', 
-              items: { type: 'object' },
-              description: 'Datos a escribir (array de objetos)' 
+              items: { 
+                type: 'object',
+                additionalProperties: true
+              },
+              description: 'REQUERIDO: Array de objetos donde cada objeto representa una fila. Las claves del objeto serán las columnas. Ejemplo: [{"Nombre": "Juan", "Edad": 30}, {"Nombre": "Ana", "Edad": 25}]' 
             },
-            sheetName: { type: 'string', description: 'Nombre de la hoja (opcional)' }
+            sheetName: { type: 'string', description: 'Nombre de la hoja (opcional, por defecto "Sheet1")' }
           },
           required: ['filePath', 'data']
         }
       },
       {
         name: 'modify_excel',
-        description: 'Modifica un archivo Excel existente',
+        description: 'Modifica un archivo Excel existente agregando, actualizando o eliminando filas. Ejemplo: para agregar filas usa addRows: [{"Nombre": "Juan", "Edad": 30}]',
         inputSchema: {
           type: 'object',
           properties: {
             filePath: { type: 'string', description: 'Ruta del archivo Excel a modificar' },
             modifications: {
               type: 'object',
-              description: 'Modificaciones a realizar',
+              description: 'Modificaciones a realizar en el archivo',
               properties: {
-                sheetName: { type: 'string', description: 'Nombre de la hoja' },
-                addRows: { type: 'array', items: { type: 'object' }, description: 'Filas a agregar' },
-                updateRows: { type: 'array', items: { type: 'object' }, description: 'Filas a actualizar' },
-                deleteRows: { type: 'array', items: { type: 'number' }, description: 'Índices de filas a eliminar' }
+                sheetName: { type: 'string', description: 'Nombre de la hoja (opcional, por defecto la primera hoja)' },
+                addRows: { 
+                  type: 'array', 
+                  items: { 
+                    type: 'object',
+                    additionalProperties: true
+                  }, 
+                  description: 'Filas a agregar como array de objetos. Ejemplo: [{"Columna1": "valor1", "Columna2": "valor2"}]' 
+                },
+                updateRows: { 
+                  type: 'array', 
+                  items: { 
+                    type: 'object',
+                    additionalProperties: true
+                  }, 
+                  description: 'Filas a actualizar como array de objetos con índice. Ejemplo: [{"index": 0, "Columna1": "nuevo_valor"}]' 
+                },
+                deleteRows: { type: 'array', items: { type: 'number' }, description: 'Índices de filas a eliminar (empezando desde 0)' }
               }
             }
           },
           required: ['filePath', 'modifications']
+        }
+      },
+      {
+        name: 'read_excel_with_formulas',
+        description: 'Lee un archivo Excel con soporte completo para fórmulas. Calcula automáticamente las fórmulas y extrae información detallada. Útil para archivos con cálculos complejos.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filePath: { type: 'string', description: 'Ruta del archivo Excel a leer' },
+            sheetName: { type: 'string', description: 'Nombre de la hoja específica (opcional, por defecto lee la primera hoja)' },
+            calculateFormulas: { type: 'boolean', description: 'Si calcular las fórmulas automáticamente antes de leer (por defecto: true)' }
+          },
+          required: ['filePath']
+        }
+      },
+      {
+        name: 'add_excel_formulas',
+        description: 'Agrega fórmulas a celdas específicas en un archivo Excel existente. Ejemplo: agregar =SUM(A1:A10) en la celda B1',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filePath: { type: 'string', description: 'Ruta del archivo Excel existente' },
+            formulas: {
+              type: 'object',
+              description: 'Configuración de las fórmulas a agregar',
+              properties: {
+                sheetName: { type: 'string', description: 'Nombre de la hoja donde agregar las fórmulas (opcional, por defecto la primera hoja)' },
+                cellFormulas: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      cell: { type: 'string', description: 'Dirección de la celda donde colocar la fórmula (ejemplos: A1, B2, C10)' },
+                      formula: { type: 'string', description: 'Fórmula de Excel a agregar (ejemplos: =SUM(A1:A10), =AVERAGE(B1:B5), =A1*B1)' }
+                    },
+                    required: ['cell', 'formula']
+                  },
+                  description: 'Array de fórmulas a agregar. Ejemplo: [{"cell": "C1", "formula": "=A1+B1"}]'
+                }
+              },
+              required: ['cellFormulas']
+            }
+          },
+          required: ['filePath', 'formulas']
+        }
+      },
+      {
+        name: 'calculate_excel_formulas',
+        description: 'Calcula todas las fórmulas en una hoja de Excel y guarda los resultados calculados en el archivo. Útil para actualizar valores después de cambios en los datos.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filePath: { type: 'string', description: 'Ruta del archivo Excel con fórmulas a calcular' },
+            sheetName: { type: 'string', description: 'Nombre de la hoja específica (opcional, por defecto calcula todas las hojas)' }
+          },
+          required: ['filePath']
+        }
+      },
+      {
+        name: 'get_excel_formulas_info',
+        description: 'Obtiene información detallada sobre todas las fórmulas en una hoja de Excel, incluyendo ubicación, dependencias, tipos de fórmulas y estadísticas. No modifica el archivo.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filePath: { type: 'string', description: 'Ruta del archivo Excel a analizar' },
+            sheetName: { type: 'string', description: 'Nombre de la hoja específica (opcional, por defecto analiza la primera hoja)' }
+          },
+          required: ['filePath']
         }
       }
     ];
@@ -673,6 +803,376 @@ export class ElectronMCPServer {
     }
   }
 
+  private async readPdfSmart(args: { 
+    filePath: string; 
+    strategy?: 'full' | 'preview' | 'pages' | 'limit';
+    pages?: number[];
+    maxPages?: number;
+    maxCharacters?: number;
+    useOcr?: boolean;
+    _options?: { cwd?: string } 
+  }) {
+    // Establecer valores por defecto
+    const strategy = args.strategy || 'preview';
+    const maxPages = args.maxPages || 3;
+    const maxCharacters = args.maxCharacters || 10000;
+    const useOcr = args.useOcr || false;
+    
+    console.log(`\n🚀 [PDF_SMART] ===== NUEVA PETICIÓN =====`);
+    console.log(`📄 [PDF_SMART] Archivo: ${args.filePath}`);
+    console.log(`🎯 [PDF_SMART] Estrategia: ${strategy.toUpperCase()}`);
+    
+    // Log de parámetros específicos según la estrategia
+    switch (strategy) {
+      case 'preview':
+        console.log(`📖 [PDF_SMART] Páginas máximas: ${maxPages}`);
+        break;
+      case 'pages':
+        console.log(`📑 [PDF_SMART] Páginas específicas: [${args.pages?.join(', ') || 'No especificadas'}]`);
+        break;
+      case 'limit':
+        console.log(`📏 [PDF_SMART] Límite de caracteres: ${maxCharacters}`);
+        break;
+      case 'full':
+        console.log(`📚 [PDF_SMART] Lectura completa (máx. 10 páginas)`);
+        break;
+    }
+    
+    console.log(`🔧 [PDF_SMART] Forzar OCR: ${useOcr ? 'SÍ' : 'NO'}`);
+    console.log(`⏰ [PDF_SMART] Timestamp: ${new Date().toISOString()}`);
+    console.log(`🚀 [PDF_SMART] =============================\n`);
+    
+    // Resolver ruta relativa si se proporciona cwd
+    let resolvedPath = args.filePath;
+    if (args._options?.cwd && !path.isAbsolute(args.filePath)) {
+      resolvedPath = path.resolve(args._options.cwd, args.filePath);
+    }
+
+    console.log(`[OCR] Ruta resuelta: ${resolvedPath}`);
+
+    // Validar que el archivo existe
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(`Archivo no encontrado: ${resolvedPath}`);
+    }
+
+    // Validar que es un PDF
+    if (!resolvedPath.toLowerCase().endsWith('.pdf')) {
+      throw new Error('El archivo debe ser un PDF');
+    }
+
+    try {
+      let extractedText = '';
+      let metadata = {
+        strategy: strategy,
+        totalPages: 0,
+        pagesRead: [],
+        charactersExtracted: 0,
+        ocrUsed: false
+      };
+
+      // Si se fuerza OCR o si la estrategia lo requiere
+      if (useOcr) {
+        console.log(`🔧 [PDF_SMART] DECISIÓN: Forzando uso de OCR por parámetro useOcr=true`);
+        return await this.readPdfSmartWithOcr(resolvedPath, {...args, strategy, maxPages, maxCharacters, useOcr}, metadata);
+      }
+
+      // Intentar lectura directa primero
+      console.log(`📖 [PDF_SMART] DECISIÓN: Intentando lectura directa del PDF primero`);
+      
+      await initializePdfParse();
+      const dataBuffer = fs.readFileSync(resolvedPath);
+      const parser = new PDFParseClass({ data: dataBuffer });
+      let pdfData;
+      
+      try {
+        pdfData = await parser.getText();
+      } finally {
+        // Limpiar el parser
+        if (parser && typeof parser.destroy === 'function') {
+          await parser.destroy();
+        }
+      }
+      
+      metadata.totalPages = pdfData.total || pdfData.numpages || 1;
+      console.log(`📊 [PDF_SMART] PDF analizado: ${metadata.totalPages} páginas, ${pdfData.text?.length || 0} caracteres de texto directo`);
+
+      // Verificar si hay texto extraíble
+      if (!pdfData.text || pdfData.text.trim().length < 50) {
+        console.log(`⚠️  [PDF_SMART] DECISIÓN: Texto insuficiente en lectura directa (${pdfData.text?.trim().length || 0} chars), cambiando a OCR automáticamente`);
+        metadata.ocrUsed = true;
+        return await this.readPdfSmartWithOcr(resolvedPath, {...args, strategy, maxPages, maxCharacters, useOcr}, metadata);
+      }
+
+      console.log(`✅ [PDF_SMART] DECISIÓN: Texto directo suficiente, aplicando estrategia ${strategy.toUpperCase()}`);
+
+      // Aplicar estrategia de lectura
+      switch (strategy) {
+        case 'full':
+          console.log(`📚 [PDF_SMART] PROCESANDO: Estrategia FULL - Extrayendo todo el texto (${pdfData.text.length} caracteres)`);
+          extractedText = pdfData.text;
+          metadata.pagesRead = Array.from({length: metadata.totalPages}, (_, i) => i + 1);
+          break;
+
+        case 'preview':
+          // Para preview, necesitamos OCR para páginas específicas
+          console.log(`📖 [PDF_SMART] DECISIÓN: Estrategia PREVIEW requiere OCR para páginas específicas (1-${Math.min(maxPages, metadata.totalPages)})`);
+          metadata.ocrUsed = true;
+          return await this.readPdfSmartWithOcr(resolvedPath, {...args, strategy, maxPages, maxCharacters, useOcr, pages: Array.from({length: Math.min(maxPages, metadata.totalPages)}, (_, i) => i + 1)}, metadata);
+
+        case 'pages':
+          if (!args.pages || args.pages.length === 0) {
+            throw new Error('Para strategy="pages" se requiere el parámetro pages con números de página');
+          }
+          // Para páginas específicas, necesitamos OCR
+          console.log(`📑 [PDF_SMART] DECISIÓN: Estrategia PAGES requiere OCR para páginas específicas [${args.pages.join(', ')}]`);
+          metadata.ocrUsed = true;
+          return await this.readPdfSmartWithOcr(resolvedPath, {...args, strategy, maxPages, maxCharacters, useOcr}, metadata);
+
+        case 'limit':
+          console.log(`📏 [PDF_SMART] PROCESANDO: Estrategia LIMIT - Limitando a ${maxCharacters} caracteres de ${pdfData.text.length} totales`);
+          extractedText = pdfData.text.substring(0, maxCharacters);
+          metadata.pagesRead = [1]; // Aproximación, no sabemos exactamente qué páginas
+          break;
+
+        default:
+          throw new Error(`Estrategia no válida: ${strategy}`);
+      }
+
+      metadata.charactersExtracted = extractedText.length;
+      
+      console.log(`\n✅ [PDF_SMART] ===== RESULTADO FINAL =====`);
+      console.log(`📊 [PDF_SMART] Caracteres extraídos: ${metadata.charactersExtracted}`);
+      console.log(`📄 [PDF_SMART] Páginas procesadas: [${metadata.pagesRead.join(', ')}]`);
+      console.log(`🔧 [PDF_SMART] OCR utilizado: ${metadata.ocrUsed ? 'SÍ' : 'NO'}`);
+      console.log(`⏰ [PDF_SMART] Completado: ${new Date().toISOString()}`);
+      console.log(`✅ [PDF_SMART] ===============================\n`);
+      
+      return {
+        text: extractedText,
+        metadata: metadata
+      };
+
+    } catch (error) {
+      console.error(`❌ [PDF_SMART] ERROR en procesamiento:`, error);
+      
+      // Si falla la lectura directa, intentar OCR como fallback
+      if (!args.useOcr) {
+        console.log(`🔄 [PDF_SMART] FALLBACK: Cambiando a OCR debido a error en lectura directa`);
+        console.log(`🎯 [PDF_SMART] FALLBACK: Estrategia ${args.strategy.toUpperCase()} será procesada con OCR`);
+        const metadata = {
+          strategy: args.strategy,
+          totalPages: 0,
+          pagesRead: [],
+          charactersExtracted: 0,
+          ocrUsed: true
+        };
+        return await this.readPdfSmartWithOcr(resolvedPath, args, metadata);
+      }
+      
+      console.error(`❌ [PDF_SMART] ERROR FINAL: No se pudo procesar el PDF con ningún método`);
+      throw error;
+    }
+  }
+
+  private async readPdfSmartWithOcr(resolvedPath: string, args: any, metadata: any) {
+    console.log(`\n🔍 [PDF_SMART_OCR] ===== INICIANDO OCR =====`);
+    console.log(`📄 [PDF_SMART_OCR] Archivo: ${resolvedPath}`);
+    console.log(`🎯 [PDF_SMART_OCR] Estrategia: ${args.strategy.toUpperCase()}`);
+    
+    const tempDir = path.join(process.cwd(), 'temp_ocr_smart');
+    
+    try {
+      // Obtener número total de páginas del PDF primero
+      let totalPages = metadata.totalPages || 1;
+      
+      // Si no tenemos el total de páginas en metadata, intentar obtenerlo
+      if (!metadata.totalPages) {
+        try {
+          if (!PDFParseClass) {
+            await initializePdfParse();
+          }
+          const dataBuffer = fs.readFileSync(resolvedPath);
+          const pdfData = new PDFParseClass({ data: dataBuffer });
+          const parsedData = await pdfData.getText();
+          totalPages = parsedData.total || parsedData.numpages || 1;
+          metadata.totalPages = totalPages;
+          console.log(`📊 [PDF_SMART_OCR] Total de páginas detectado: ${totalPages}`);
+        } catch (pageCountError) {
+          console.log(`⚠️  [PDF_SMART_OCR] No se pudo determinar el número de páginas, asumiendo 1`);
+          totalPages = 1;
+        }
+      }
+
+      // Crear directorio temporal
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      // Configurar pdf2pic
+      const convert = pdfToPicFromPath(resolvedPath, {
+        density: 200,
+        saveFilename: "page",
+        savePath: tempDir,
+        format: "png",
+        width: 2000,
+        height: 2000
+      });
+
+      let pagesToProcess: number[] = [];
+      
+      // Determinar qué páginas procesar según la estrategia
+      switch (args.strategy) {
+        case 'full':
+          // Para full, procesamos todas las páginas (limitado a 10 para rendimiento)
+          const maxPagesForFull = Math.min(10, totalPages);
+          pagesToProcess = Array.from({length: maxPagesForFull}, (_, i) => i + 1);
+          console.log(`📚 [PDF_SMART_OCR] FULL: Procesando hasta ${maxPagesForFull} páginas de ${totalPages} totales`);
+          break;
+          
+        case 'preview':
+          const maxPages = Math.min(args.maxPages || 3, totalPages);
+          pagesToProcess = Array.from({length: maxPages}, (_, i) => i + 1);
+          console.log(`📖 [PDF_SMART_OCR] PREVIEW: Procesando primeras ${maxPages} páginas de ${totalPages} totales`);
+          break;
+          
+        case 'pages':
+          const requestedPages = args.pages || [1];
+          // Filtrar páginas que existen en el PDF
+          pagesToProcess = requestedPages.filter(page => page >= 1 && page <= totalPages);
+          if (pagesToProcess.length !== requestedPages.length) {
+            const invalidPages = requestedPages.filter(page => page < 1 || page > totalPages);
+            console.log(`⚠️  [PDF_SMART_OCR] PAGES: Páginas inválidas ignoradas [${invalidPages.join(', ')}] - PDF solo tiene ${totalPages} páginas`);
+          }
+          console.log(`📑 [PDF_SMART_OCR] PAGES: Procesando páginas válidas [${pagesToProcess.join(', ')}] de ${totalPages} totales`);
+          break;
+          
+        case 'limit':
+          // Para limit, solo procesamos la primera página si existe
+          pagesToProcess = totalPages >= 1 ? [1] : [];
+          console.log(`📏 [PDF_SMART_OCR] LIMIT: Procesando página 1 de ${totalPages} totales (límite: ${args.maxCharacters || 10000} chars)`);
+          break;
+      }
+
+      // Verificar que tenemos páginas válidas para procesar
+      if (pagesToProcess.length === 0) {
+        throw new Error(`No hay páginas válidas para procesar. PDF tiene ${totalPages} páginas.`);
+      }
+
+      console.log(`🔄 [PDF_SMART_OCR] Páginas a procesar: [${pagesToProcess.join(', ')}]`);
+      
+      let combinedText = '';
+      const processedPages: number[] = [];
+
+      // Procesar cada página
+      for (const pageNum of pagesToProcess) {
+        try {
+          console.log(`[OCR] Convirtiendo página ${pageNum} a imagen...`);
+          
+          // Convertir página específica con timeout
+          const conversionPromise = convert(pageNum, { responseType: "image" });
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`Timeout en conversión de página ${pageNum}`)), 30000)
+          );
+          
+          const result: any = await Promise.race([conversionPromise, timeoutPromise]);
+          
+          if (!result || !result.path) {
+            console.log(`[OCR] No se pudo convertir la página ${pageNum}, saltando...`);
+            continue;
+          }
+
+          console.log(`[OCR] Página ${pageNum} convertida: ${result.path}`);
+
+          // Verificar que el archivo de imagen existe
+          if (!fs.existsSync(result.path)) {
+            console.log(`[OCR] Archivo de imagen no encontrado para página ${pageNum}, saltando...`);
+            continue;
+          }
+
+          // Crear worker de Tesseract
+          console.log(`[OCR] Iniciando reconocimiento OCR para página ${pageNum}...`);
+          const worker = await createWorker('spa');
+          
+          try {
+            // Reconocimiento con timeout
+            const recognitionPromise = worker.recognize(result.path);
+            const ocrTimeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error(`Timeout en OCR de página ${pageNum}`)), 60000)
+            );
+            
+            const { data: { text } }: any = await Promise.race([recognitionPromise, ocrTimeoutPromise]);
+            
+            if (text && text.trim().length > 0) {
+              combinedText += `\n--- Página ${pageNum} ---\n${text.trim()}\n`;
+              processedPages.push(pageNum);
+              console.log(`[OCR] Página ${pageNum} procesada exitosamente - ${text.length} caracteres`);
+              
+              // Para strategy 'limit', verificar si ya alcanzamos el límite
+              if (args.strategy === 'limit') {
+                const maxChars = args.maxCharacters || 10000;
+                if (combinedText.length >= maxChars) {
+                  combinedText = combinedText.substring(0, maxChars);
+                  console.log(`[OCR] Límite de caracteres alcanzado: ${maxChars}`);
+                  break;
+                }
+              }
+            } else {
+              console.log(`[OCR] No se extrajo texto de la página ${pageNum}`);
+            }
+          } finally {
+            await worker.terminate();
+          }
+
+          // Limpiar archivo de imagen temporal
+          try {
+            fs.unlinkSync(result.path);
+          } catch (cleanupError) {
+            console.log(`[OCR] Error limpiando archivo temporal: ${cleanupError}`);
+          }
+
+        } catch (pageError) {
+          console.error(`[OCR] Error procesando página ${pageNum}:`, pageError);
+          continue;
+        }
+      }
+
+      // Actualizar metadata
+      metadata.pagesRead = processedPages;
+      metadata.charactersExtracted = combinedText.length;
+      metadata.ocrUsed = true;
+
+      if (combinedText.trim().length === 0) {
+        throw new Error('No se pudo extraer texto de ninguna página del PDF');
+      }
+
+      console.log(`\n✅ [PDF_SMART_OCR] ===== RESULTADO OCR =====`);
+      console.log(`📊 [PDF_SMART_OCR] Páginas procesadas exitosamente: [${processedPages.join(', ')}]`);
+      console.log(`📏 [PDF_SMART_OCR] Caracteres extraídos: ${combinedText.length}`);
+      console.log(`🎯 [PDF_SMART_OCR] Estrategia aplicada: ${args.strategy.toUpperCase()}`);
+      console.log(`⏰ [PDF_SMART_OCR] Completado: ${new Date().toISOString()}`);
+      console.log(`✅ [PDF_SMART_OCR] ===========================\n`);
+
+      return {
+        text: combinedText.trim(),
+        metadata: metadata
+      };
+
+    } finally {
+      // Limpiar directorio temporal
+      try {
+        if (fs.existsSync(tempDir)) {
+          const files = fs.readdirSync(tempDir);
+          for (const file of files) {
+            fs.unlinkSync(path.join(tempDir, file));
+          }
+          fs.rmdirSync(tempDir);
+        }
+      } catch (cleanupError) {
+        console.log(`[OCR] Error en limpieza final:`, cleanupError);
+      }
+    }
+  }
+
   private async readExcel(args: { filePath: string; sheetName?: string; _options?: { cwd?: string } }) {
     // Resolver ruta relativa si se proporciona cwd
     let resolvedPath = args.filePath;
@@ -742,5 +1242,229 @@ export class ElectronMCPServer {
     XLSX.writeFile(workbook, resolvedPath);
     
     return { success: true };
+  }
+
+  private async readExcelWithFormulas(args: { 
+    filePath: string; 
+    sheetName?: string; 
+    calculateFormulas?: boolean; 
+    _options?: { cwd?: string } 
+  }) {
+    // Resolver ruta relativa si se proporciona cwd
+    let resolvedPath = args.filePath;
+    if (args._options?.cwd && !path.isAbsolute(args.filePath)) {
+      resolvedPath = path.resolve(args._options.cwd, args.filePath);
+    }
+
+    const workbook = XLSX.readFile(resolvedPath);
+    const targetSheetName = args.sheetName && workbook.SheetNames.includes(args.sheetName)
+      ? args.sheetName
+      : workbook.SheetNames[0];
+    
+    const sheet = workbook.Sheets[targetSheetName];
+    
+    if (args.calculateFormulas !== false) {
+      // Calcular fórmulas usando xlsx-calc
+      try {
+        xlsxCalc(workbook);
+      } catch (calcError) {
+        console.warn('Error calculando fórmulas:', calcError);
+      }
+    }
+    
+    // Obtener datos con fórmulas preservadas
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+    const formulaData = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
+    
+    // Extraer información de fórmulas
+    const formulas: { cell: string; formula: string; value?: any }[] = [];
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+    
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = sheet[cellAddress];
+        if (cell && cell.f) {
+          formulas.push({
+            cell: cellAddress,
+            formula: cell.f,
+            value: cell.v
+          });
+        }
+      }
+    }
+    
+    return {
+      sheets: workbook.SheetNames,
+      currentSheet: targetSheetName,
+      data: rows,
+      formulaData: formulaData,
+      formulas: formulas,
+      rowCount: rows.length,
+      formulaCount: formulas.length,
+      calculated: args.calculateFormulas !== false
+    };
+  }
+
+  private async addExcelFormulas(args: {
+    filePath: string;
+    formulas: {
+      sheetName?: string;
+      cellFormulas: { cell: string; formula: string }[];
+    };
+    _options?: { cwd?: string };
+  }) {
+    // Resolver ruta relativa si se proporciona cwd
+    let resolvedPath = args.filePath;
+    if (args._options?.cwd && !path.isAbsolute(args.filePath)) {
+      resolvedPath = path.resolve(args._options.cwd, args.filePath);
+    }
+
+    const workbook = XLSX.readFile(resolvedPath);
+    const targetSheetName = args.formulas.sheetName && workbook.SheetNames.includes(args.formulas.sheetName)
+      ? args.formulas.sheetName
+      : workbook.SheetNames[0];
+    
+    const sheet = workbook.Sheets[targetSheetName];
+    
+    // Agregar fórmulas a las celdas especificadas
+    for (const cellFormula of args.formulas.cellFormulas) {
+      const cellAddress = cellFormula.cell.toUpperCase();
+      if (!sheet[cellAddress]) {
+        sheet[cellAddress] = {};
+      }
+      sheet[cellAddress].f = cellFormula.formula;
+      // Limpiar el valor para forzar recálculo
+      delete sheet[cellAddress].v;
+    }
+    
+    // Actualizar el rango de la hoja si es necesario
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+    for (const cellFormula of args.formulas.cellFormulas) {
+      const cellRef = XLSX.utils.decode_cell(cellFormula.cell);
+      if (cellRef.r > range.e.r) range.e.r = cellRef.r;
+      if (cellRef.c > range.e.c) range.e.c = cellRef.c;
+      if (cellRef.r < range.s.r) range.s.r = cellRef.r;
+      if (cellRef.c < range.s.c) range.s.c = cellRef.c;
+    }
+    sheet['!ref'] = XLSX.utils.encode_range(range);
+    
+    // Calcular fórmulas
+    try {
+      xlsxCalc(workbook);
+    } catch (calcError) {
+      console.warn('Error calculando fórmulas:', calcError);
+    }
+    
+    // Guardar el archivo
+    XLSX.writeFile(workbook, resolvedPath);
+    
+    return {
+      formulasAdded: args.formulas.cellFormulas.length,
+      sheetName: targetSheetName
+    };
+  }
+
+  private async calculateExcelFormulas(args: { 
+    filePath: string; 
+    sheetName?: string; 
+    _options?: { cwd?: string } 
+  }) {
+    // Resolver ruta relativa si se proporciona cwd
+    let resolvedPath = args.filePath;
+    if (args._options?.cwd && !path.isAbsolute(args.filePath)) {
+      resolvedPath = path.resolve(args._options.cwd, args.filePath);
+    }
+
+    const workbook = XLSX.readFile(resolvedPath);
+    const targetSheetName = args.sheetName && workbook.SheetNames.includes(args.sheetName)
+      ? args.sheetName
+      : workbook.SheetNames[0];
+    
+    // Calcular todas las fórmulas
+    try {
+      xlsxCalc(workbook);
+    } catch (calcError) {
+      throw new Error(`Error calculando fórmulas: ${calcError instanceof Error ? calcError.message : 'Error desconocido'}`);
+    }
+    
+    // Guardar el archivo con los valores calculados
+    XLSX.writeFile(workbook, resolvedPath);
+    
+    const sheet = workbook.Sheets[targetSheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+    
+    return {
+      sheetName: targetSheetName,
+      rowCount: rows.length,
+      calculated: true
+    };
+  }
+
+  private async getExcelFormulasInfo(args: { 
+    filePath: string; 
+    sheetName?: string; 
+    _options?: { cwd?: string } 
+  }) {
+    // Resolver ruta relativa si se proporciona cwd
+    let resolvedPath = args.filePath;
+    if (args._options?.cwd && !path.isAbsolute(args.filePath)) {
+      resolvedPath = path.resolve(args._options.cwd, args.filePath);
+    }
+
+    const workbook = XLSX.readFile(resolvedPath);
+    const targetSheetName = args.sheetName && workbook.SheetNames.includes(args.sheetName)
+      ? args.sheetName
+      : workbook.SheetNames[0];
+    
+    const sheet = workbook.Sheets[targetSheetName];
+    
+    // Extraer información detallada de fórmulas
+    const formulas: { 
+      cell: string; 
+      formula: string; 
+      value?: any; 
+      type?: string;
+      dependencies?: string[];
+    }[] = [];
+    
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+    
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = sheet[cellAddress];
+        if (cell && cell.f) {
+          // Analizar dependencias básicas (referencias a otras celdas)
+          const dependencies = cell.f.match(/[A-Z]+[0-9]+/g) || [];
+          
+          formulas.push({
+            cell: cellAddress,
+            formula: cell.f,
+            value: cell.v,
+            type: typeof cell.v,
+            dependencies: [...new Set(dependencies)] as string[] // Eliminar duplicados
+          });
+        }
+      }
+    }
+    
+    // Estadísticas
+    const formulaTypes = formulas.reduce((acc, f) => {
+      const firstChar = f.formula.charAt(0);
+      const key = firstChar === '=' ? 'formula' : 'expression';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    return {
+      sheetName: targetSheetName,
+      formulas: formulas,
+      formulaCount: formulas.length,
+      formulaTypes: formulaTypes,
+      totalCells: (range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1),
+      formulaPercentage: formulas.length > 0 ? 
+        ((formulas.length / ((range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1))) * 100).toFixed(2) : '0'
+    };
   }
 }

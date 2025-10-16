@@ -3,12 +3,33 @@ import * as path from 'path';
 import * as fs from 'fs';
 const chokidar = require('chokidar');
 import * as XLSX from 'xlsx';
+import * as xlsxCalc from 'xlsx-calc';
 import { fromPath as pdfToPicFromPath } from 'pdf2pic';
 import { createWorker } from 'tesseract.js';
 import * as dotenv from 'dotenv';
-import { createOpenAIService, ChatMessage } from '../services/openaiService';
+import { createOpenAIService, ChatMessage as OpenAIChatMessage } from '../services/openaiService';
 import { ElectronMCPService } from '../mcp/electronMcpService';
 import { IntegratedMCPService, MCPResponse } from '../services/integratedMcpService';
+import { ChatMessage } from '../types/global';
+
+// Función de conversión entre tipos de ChatMessage
+function convertToOpenAIChatMessage(message: ChatMessage): OpenAIChatMessage {
+  return {
+    role: message.role,
+    content: message.content,
+    timestamp: message.timestamp
+  };
+}
+
+// Función para convertir mensajes del frontend al tipo ChatMessage completo
+function ensureCompleteMessage(message: any): ChatMessage {
+  return {
+    id: message.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    role: message.role,
+    content: message.content,
+    timestamp: message.timestamp || new Date()
+  };
+}
 
 // Inicialización de pdf-parse v2.3.0
 let PDFParseClass: any = null;
@@ -68,7 +89,8 @@ function ensureIntegratedMCPServiceInitialized(): void {
     try {
       integratedMcpService = new IntegratedMCPService({
         apiKey,
-        model: process.env.OPENAI_MODEL || 'gpt-4o'
+        model: process.env.OPENAI_MODEL || 'gpt-4o',
+        tier: 2 // Usar Tier 2 por defecto para mejores límites
       });
       console.log('[IntegratedMCP] IntegratedMCPService inicializado correctamente.');
     } catch (error) {
@@ -649,6 +671,274 @@ ipcMain.handle(
   }
 );
 
+// IPC: Nuevos handlers para fórmulas de Excel usando xlsx-calc
+ipcMain.handle(
+  'excel-read-with-formulas',
+  async (_, filePath: string, sheetName?: string, calculateFormulas: boolean = true) => {
+    try {
+      const sizeCheck = await ensureFileSizeWithin(filePath, MAX_EXCEL_SIZE_MB);
+      if (!sizeCheck.ok) {
+        return { success: false, error: sizeCheck.error };
+      }
+      
+      const workbook = XLSX.readFile(filePath);
+      const targetSheetName =
+        sheetName && workbook.SheetNames.includes(sheetName)
+          ? sheetName
+          : workbook.SheetNames[0];
+      
+      const sheet = workbook.Sheets[targetSheetName];
+      
+      if (calculateFormulas) {
+        // Calcular fórmulas usando xlsx-calc
+        try {
+          xlsxCalc(workbook);
+        } catch (calcError) {
+          console.warn('Error calculando fórmulas:', calcError);
+        }
+      }
+      
+      // Obtener datos con fórmulas preservadas
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+      const formulaData = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
+      
+      // Extraer información de fórmulas
+      const formulas: { cell: string; formula: string; value?: any }[] = [];
+      const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+      
+      for (let R = range.s.r; R <= range.e.r; ++R) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+          const cell = sheet[cellAddress];
+          if (cell && cell.f) {
+            formulas.push({
+              cell: cellAddress,
+              formula: cell.f,
+              value: cell.v
+            });
+          }
+        }
+      }
+      
+      return {
+        success: true,
+        data: {
+          sheets: workbook.SheetNames,
+          currentSheet: targetSheetName,
+          data: rows,
+          formulaData: formulaData,
+          formulas: formulas,
+          rowCount: rows.length,
+          formulaCount: formulas.length,
+          calculated: calculateFormulas
+        },
+      };
+    } catch (error) {
+      console.error('excel-read-with-formulas error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
+  }
+);
+
+ipcMain.handle(
+  'excel-add-formulas',
+  async (_, filePath: string, formulas: {
+    sheetName?: string;
+    cellFormulas: { cell: string; formula: string }[];
+  }) => {
+    try {
+      const sizeCheck = await ensureFileSizeWithin(filePath, MAX_EXCEL_SIZE_MB);
+      if (!sizeCheck.ok) {
+        return { success: false, error: sizeCheck.error };
+      }
+      
+      const workbook = XLSX.readFile(filePath);
+      const targetSheetName =
+        formulas.sheetName && workbook.SheetNames.includes(formulas.sheetName)
+          ? formulas.sheetName
+          : workbook.SheetNames[0];
+      
+      const sheet = workbook.Sheets[targetSheetName];
+      
+      // Agregar fórmulas a las celdas especificadas
+      for (const cellFormula of formulas.cellFormulas) {
+        const cellAddress = cellFormula.cell.toUpperCase();
+        if (!sheet[cellAddress]) {
+          sheet[cellAddress] = {};
+        }
+        sheet[cellAddress].f = cellFormula.formula;
+        // Limpiar el valor para forzar recálculo
+        delete sheet[cellAddress].v;
+      }
+      
+      // Actualizar el rango de la hoja si es necesario
+      const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+      for (const cellFormula of formulas.cellFormulas) {
+        const cellRef = XLSX.utils.decode_cell(cellFormula.cell);
+        if (cellRef.r > range.e.r) range.e.r = cellRef.r;
+        if (cellRef.c > range.e.c) range.e.c = cellRef.c;
+        if (cellRef.r < range.s.r) range.s.r = cellRef.r;
+        if (cellRef.c < range.s.c) range.s.c = cellRef.c;
+      }
+      sheet['!ref'] = XLSX.utils.encode_range(range);
+      
+      // Calcular fórmulas
+      try {
+        xlsxCalc(workbook);
+      } catch (calcError) {
+        console.warn('Error calculando fórmulas:', calcError);
+      }
+      
+      // Guardar el archivo
+      XLSX.writeFile(workbook, filePath);
+      
+      return {
+        success: true,
+        data: {
+          formulasAdded: formulas.cellFormulas.length,
+          sheetName: targetSheetName
+        }
+      };
+    } catch (error) {
+      console.error('excel-add-formulas error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
+  }
+);
+
+ipcMain.handle(
+  'excel-calculate-formulas',
+  async (_, filePath: string, sheetName?: string) => {
+    try {
+      const sizeCheck = await ensureFileSizeWithin(filePath, MAX_EXCEL_SIZE_MB);
+      if (!sizeCheck.ok) {
+        return { success: false, error: sizeCheck.error };
+      }
+      
+      const workbook = XLSX.readFile(filePath);
+      const targetSheetName =
+        sheetName && workbook.SheetNames.includes(sheetName)
+          ? sheetName
+          : workbook.SheetNames[0];
+      
+      // Calcular todas las fórmulas
+      try {
+        xlsxCalc(workbook);
+      } catch (calcError) {
+        console.error('Error calculando fórmulas:', calcError);
+        return {
+          success: false,
+          error: `Error calculando fórmulas: ${calcError instanceof Error ? calcError.message : 'Error desconocido'}`
+        };
+      }
+      
+      // Guardar el archivo con los valores calculados
+      XLSX.writeFile(workbook, filePath);
+      
+      const sheet = workbook.Sheets[targetSheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+      
+      return {
+        success: true,
+        data: {
+          sheetName: targetSheetName,
+          rowCount: rows.length,
+          calculated: true
+        }
+      };
+    } catch (error) {
+      console.error('excel-calculate-formulas error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
+  }
+);
+
+ipcMain.handle(
+  'excel-get-formulas-info',
+  async (_, filePath: string, sheetName?: string) => {
+    try {
+      const sizeCheck = await ensureFileSizeWithin(filePath, MAX_EXCEL_SIZE_MB);
+      if (!sizeCheck.ok) {
+        return { success: false, error: sizeCheck.error };
+      }
+      
+      const workbook = XLSX.readFile(filePath);
+      const targetSheetName =
+        sheetName && workbook.SheetNames.includes(sheetName)
+          ? sheetName
+          : workbook.SheetNames[0];
+      
+      const sheet = workbook.Sheets[targetSheetName];
+      
+      // Extraer información detallada de fórmulas
+      const formulas: { 
+        cell: string; 
+        formula: string; 
+        value?: any; 
+        type?: string;
+        dependencies?: string[];
+      }[] = [];
+      
+      const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+      
+      for (let R = range.s.r; R <= range.e.r; ++R) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+          const cell = sheet[cellAddress];
+          if (cell && cell.f) {
+            // Analizar dependencias básicas (referencias a otras celdas)
+             const dependencies = cell.f.match(/[A-Z]+[0-9]+/g) || [];
+             
+             formulas.push({
+               cell: cellAddress,
+               formula: cell.f,
+               value: cell.v,
+               type: typeof cell.v,
+               dependencies: [...new Set(dependencies)] as string[] // Eliminar duplicados
+             });
+          }
+        }
+      }
+      
+      // Estadísticas
+      const formulaTypes = formulas.reduce((acc, f) => {
+        const firstChar = f.formula.charAt(0);
+        const key = firstChar === '=' ? 'formula' : 'expression';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      return {
+        success: true,
+        data: {
+          sheetName: targetSheetName,
+          formulas: formulas,
+          formulaCount: formulas.length,
+          formulaTypes: formulaTypes,
+          totalCells: (range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1),
+          formulaPercentage: formulas.length > 0 ? 
+            ((formulas.length / ((range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1))) * 100).toFixed(2) : '0'
+        }
+      };
+    } catch (error) {
+      console.error('excel-get-formulas-info error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
+  }
+);
+
 // Handlers para OpenAI
 
 ipcMain.handle('init-openai', async (_, apiKey?: string) => {
@@ -675,13 +965,15 @@ ipcMain.handle('init-openai', async (_, apiKey?: string) => {
   }
 });
 
-ipcMain.handle('send-message-to-openai', async (_, messages: ChatMessage[]) => {
+ipcMain.handle('send-message-to-openai', async (_, messages: any[]) => {
   try {
     if (!openaiService) {
       throw new Error('OpenAI no está inicializado');
     }
 
-    const response = await openaiService.sendMessage(messages);
+    const completeMessages = messages.map(ensureCompleteMessage);
+    const openaiMessages = completeMessages.map(convertToOpenAIChatMessage);
+    const response = await openaiService.sendMessage(openaiMessages);
     return { success: true, response };
   } catch (error) {
     console.error('Error enviando mensaje a OpenAI:', error);
@@ -751,7 +1043,7 @@ ipcMain.handle('mcp-service-init', async () => {
   }
 });
 
-ipcMain.handle('mcp-service-send-message', async (_, messages: ChatMessage[], options?: { currentFolder?: string }) => {
+ipcMain.handle('mcp-service-send-message', async (_, messages: any[], options?: { currentFolder?: string }) => {
   try {
     ensureIntegratedMCPServiceInitialized();
     if (!integratedMcpService) {
@@ -761,7 +1053,9 @@ ipcMain.handle('mcp-service-send-message', async (_, messages: ChatMessage[], op
       };
     }
 
-    const response = await integratedMcpService.sendMessage(messages, options);
+    // Convertir mensajes al tipo correcto
+    const completeMessages = messages.map(ensureCompleteMessage);
+    const response = await integratedMcpService.sendMessage(completeMessages, options);
     return { 
       success: true, 
       response 
@@ -896,9 +1190,64 @@ ipcMain.handle('stop-file-watcher', async () => {
     return { success: true };
   } catch (error) {
     console.error('Error stopping file watcher:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Error desconocido'
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Error desconocido' 
     };
   }
+});
+
+// Batch execution handler
+ipcMain.handle('batch-execute', async (_, requests: { id: string; method: string; args: any[] }[]) => {
+  const results: { id: string; success: boolean; result?: any; error?: string }[] = [];
+  
+  for (const request of requests) {
+    try {
+      let result;
+      
+      // Map method names to actual logic
+       switch (request.method) {
+         case 'read-directory':
+           const dirPath = request.args[0];
+           const items = await fs.promises.readdir(dirPath, { withFileTypes: true });
+           result = items.map(item => ({
+             name: item.name,
+             isDirectory: item.isDirectory(),
+             path: path.join(dirPath, item.name)
+           }));
+           break;
+         case 'count-files-recursively':
+           result = await countFilesRecursively(request.args[0]);
+           break;
+         case 'get-file-stats':
+           const stats = await fs.promises.stat(request.args[0]);
+           result = {
+             size: stats.size,
+             modified: stats.mtime,
+             isDirectory: stats.isDirectory()
+           };
+           break;
+         case 'fs-read-text':
+           const content = await fs.promises.readFile(request.args[0], 'utf-8');
+           result = { success: true, data: content };
+           break;
+         default:
+           throw new Error(`Unsupported batch method: ${request.method}`);
+       }
+      
+      results.push({
+        id: request.id,
+        success: true,
+        result
+      });
+    } catch (error) {
+      results.push({
+        id: request.id,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
+  return results;
 });

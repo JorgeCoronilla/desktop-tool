@@ -4,13 +4,15 @@ import {
   AppState,
   FileItem,
   ChatMessage,
-  PreloadChatMessage,
-  OpenAIResponse,
+  // PreloadChatMessage,
+  // OpenAIResponse,
   OpenAIConfig,
   TaskState,
 } from '../types/global';
 import { SecureMCPServiceWrapper, MCPServiceWrapper } from '../services/mcpServiceWrapper';
 import { MCPMessage, MCPStreamChunk } from '../services/mcpService';
+import { batchService } from '../services/batchService';
+import { connectionPoolService } from '../services/connectionPoolService';
 
 const SYSTEM_PROMPT = `Eres un asistente amigable para gestión de archivos y documentos. Ayudas al usuario con tareas de gestión de archivos, lectura de documentos PDF, manipulación de Excel y más.
 
@@ -69,19 +71,44 @@ const App: React.FC = () => {
   // Verificar configuración de OpenAI al cargar
   useEffect(() => {
     const checkOpenAIConfig = async () => {
+      // Initialize connection pools for external services
+      try {
+        console.log('[App] Initializing connection pools...');
+        connectionPoolService.initializePool('openai', {
+          maxConnections: 3,
+          minConnections: 1,
+          connectionTimeout: 30000,
+          idleTimeout: 300000
+        });
+        connectionPoolService.initializePool('mcp', {
+          maxConnections: 2,
+          minConnections: 1,
+          connectionTimeout: 15000,
+          idleTimeout: 180000
+        });
+        console.log('[App] Connection pools initialized successfully');
+      } catch (error) {
+        console.error('[App] Error initializing connection pools:', error);
+      }
+
       // Inicializar MCPService
       try {
+        console.log('[App] Creating SecureMCPServiceWrapper...');
         // Usar el wrapper seguro que no expone la API key
         const service = new SecureMCPServiceWrapper();
+        console.log('[App] SecureMCPServiceWrapper created, checking initialization...');
+        
         const isInitialized = await service.isInitialized();
+        console.log('[App] mcpService initialization status:', isInitialized);
+        
         if (isInitialized) {
           setMcpService(service);
-          console.log('MCPService inicializado correctamente');
+          console.log('[App] mcpService set successfully');
         } else {
-          console.warn('MCPService no pudo inicializarse');
+          console.warn('[App] mcpService failed to initialize');
         }
       } catch (error) {
-        console.error('Error inicializando MCPService:', error);
+        console.error('[App] Error initializing mcpService:', error);
       }
 
       // Si estamos en preview del navegador, window.electronAPI no existe
@@ -286,13 +313,13 @@ const App: React.FC = () => {
       const folderPath = await window.electronAPI.selectFolder();
 
       if (folderPath) {
-        const files = await window.electronAPI.readDirectory(folderPath);
-        const totalFilesCount = await window.electronAPI.countFilesRecursively(folderPath);
+        // Use batching service to optimize multiple IPC calls
+        const { files, totalCount } = await batchService.getDirectoryInfo(folderPath);
         setAppState(prev => ({
           ...prev,
           currentFolder: folderPath,
           files,
-          totalFilesCount,
+          totalFilesCount: totalCount,
           isFileLoading: false,
         }));
       } else {
@@ -322,13 +349,13 @@ const App: React.FC = () => {
         }));
         return;
       }
-      const files = await window.electronAPI.readDirectory(folderPath);
-      const totalFilesCount = await window.electronAPI.countFilesRecursively(folderPath);
+      // Use batching service to optimize multiple IPC calls
+      const { files, totalCount } = await batchService.getDirectoryInfo(folderPath);
       setAppState(prev => ({
         ...prev,
         currentFolder: folderPath,
         files,
-        totalFilesCount,
+        totalFilesCount: totalCount,
         isFileLoading: false,
       }));
     } catch (error) {
@@ -347,7 +374,11 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = async (content: string) => {
+    console.log('[App] handleSendMessage called with content:', content);
+    console.log('[App] mcpService status:', !!mcpService);
+    
     if (!mcpService) {
+      console.warn('[App] mcpService is not initialized');
       const errorMessage: ChatMessage = {
         id: Date.now().toString(),
         content: '❌ MCPService no está inicializado. Por favor, recarga la aplicación.',
@@ -361,6 +392,45 @@ const App: React.FC = () => {
       return;
     }
 
+    // Verificar si se requiere una carpeta seleccionada para operaciones con archivos
+    const requiresFolderKeywords = [
+      'crear', 'crear archivo', 'crear carpeta', 'escribir', 'guardar', 'archivo',
+      'leer', 'abrir', 'modificar', 'editar', 'eliminar', 'borrar', 'mover',
+      'copiar', 'renombrar', 'listar', 'buscar', 'encontrar', 'pdf', 'excel',
+      'txt', 'documento', 'carpeta', 'directorio', 'folder'
+    ];
+    
+    const contentLower = content.toLowerCase();
+    const requiresFolder = requiresFolderKeywords.some(keyword => 
+      contentLower.includes(keyword)
+    );
+
+    if (requiresFolder && !appState.currentFolder) {
+      console.log('[App] File operation requested but no folder selected');
+      
+      // Agregar el mensaje del usuario primero
+      const userMessage: ChatMessage = {
+        id: Date.now().toString(),
+        content,
+        role: 'user',
+        timestamp: new Date(),
+      };
+      
+      const warningMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        content: '📁 Para realizar operaciones con archivos, primero debes seleccionar una carpeta de trabajo. Por favor, haz clic en "Seleccionar Carpeta" en el explorador de archivos.',
+        role: 'assistant',
+        timestamp: new Date(),
+      };
+      
+      setAppState(prev => ({
+        ...prev,
+        chatMessages: [...prev.chatMessages, userMessage, warningMessage],
+      }));
+      return;
+    }
+
+    console.log('[App] Creating new user message');
     const newMessage: ChatMessage = {
       id: Date.now().toString(),
       content,
@@ -368,6 +438,7 @@ const App: React.FC = () => {
       timestamp: new Date(),
     };
 
+    console.log('[App] Updating app state with new message and loading state');
     setAppState(prev => ({
       ...prev,
       chatMessages: [...prev.chatMessages, newMessage],
@@ -552,20 +623,27 @@ const App: React.FC = () => {
       }
       
       console.log('[DEBUG] Reading directory:', appState.currentFolder);
-      const files = await window.electronAPI.readDirectory(appState.currentFolder);
-      console.log('[DEBUG] Directory read successful, files count:', files.length);
-      console.log('[DEBUG] Files found:', files.map(f => f.name));
       
-      // Obtener conteo recursivo total
+      // Use batching service to optimize multiple IPC calls
+      let files: FileItem[] = [];
       let totalFilesCount = 0;
       try {
-        console.log('[DEBUG] Calling countFilesRecursively...');
-        totalFilesCount = await window.electronAPI.countFilesRecursively(appState.currentFolder);
+        const { files: batchedFiles, totalCount } = await batchService.getDirectoryInfo(appState.currentFolder);
+        files = batchedFiles;
+        totalFilesCount = totalCount;
+        console.log('[DEBUG] Directory read successful, files count:', files.length);
+        console.log('[DEBUG] Files found:', files.map(f => f.name));
         console.log('[DEBUG] Total files recursively:', totalFilesCount);
-      } catch (countError) {
-        console.error('[DEBUG] Error calling countFilesRecursively:', countError);
-        // Fallback al conteo local si falla
-        totalFilesCount = files.length;
+      } catch (batchError) {
+        console.error('[DEBUG] Error with batched calls, falling back to individual calls:', batchError);
+        // Fallback to individual calls if batching fails
+        try {
+          files = await window.electronAPI.readDirectory(appState.currentFolder);
+          totalFilesCount = await window.electronAPI.countFilesRecursively(appState.currentFolder);
+        } catch (fallbackError) {
+          console.error('[DEBUG] Error with fallback calls:', fallbackError);
+          totalFilesCount = files.length;
+        }
       }
       
       // Forzar nueva referencia del array para que React detecte el cambio

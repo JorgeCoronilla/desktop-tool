@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import './Chat.css';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '../../types/global';
+import { useDebounce, useDebouncedCallback } from '../../hooks/useDebounce';
 
 interface ChatProps {
   messages: ChatMessage[];
@@ -24,6 +25,12 @@ const Chat: React.FC<ChatProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
+  
+  // Debounce del input para optimizar la experiencia del usuario
+  const debouncedInputValue = useDebounce(inputValue, 300);
+  
+  // Estado para prevenir múltiples envíos rápidos
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Usamos clases globales, no CSS Modules
 
@@ -64,17 +71,39 @@ const Chat: React.FC<ChatProps> = ({
     };
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Función optimizada de envío con debouncing y prevención de múltiples envíos
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputValue.trim() && !isLoading) {
-      onSendMessage(inputValue.trim());
-      setInputValue('');
+    console.log('[Chat] handleSubmit called with inputValue:', inputValue);
+    
+    // Prevenir múltiples envíos rápidos
+    if (!inputValue.trim() || isLoading || isSubmitting) {
+      console.log('[Chat] Skipping submit - empty input, loading, or already submitting:', { 
+        inputValue: inputValue.trim(), 
+        isLoading, 
+        isSubmitting 
+      });
+      return;
     }
-  };
+
+    console.log('[Chat] About to call onSendMessage with:', inputValue);
+    
+    setIsSubmitting(true);
+    try {
+      await onSendMessage(inputValue.trim());
+      console.log('[Chat] onSendMessage completed successfully');
+      setInputValue('');
+    } catch (error) {
+      console.error('[Chat] Error in onSendMessage:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [inputValue, isLoading, isSubmitting, onSendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
+    console.log('[Chat] Key pressed:', e.key, 'with modifiers:', { ctrlKey: e.ctrlKey, metaKey: e.metaKey });
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      console.log('[Chat] Enter + Ctrl/Cmd detected, calling handleSubmit');
       handleSubmit(e);
     }
   };
@@ -151,9 +180,9 @@ const Chat: React.FC<ChatProps> = ({
             <button
               type="submit"
               className={'send-button'}
-              disabled={!inputValue.trim() || isLoading}
+              disabled={!inputValue.trim() || isLoading || isSubmitting}
             >
-              Enviar
+              {isSubmitting ? 'Enviando...' : 'Enviar'}
             </button>
             {isLoading ? (
               <button

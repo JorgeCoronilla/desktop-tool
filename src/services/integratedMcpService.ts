@@ -1,11 +1,7 @@
 import OpenAI from 'openai';
 import { ElectronMCPService } from '../mcp/electronMcpService';
-
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp?: Date;
-}
+import { cacheService } from './cacheService';
+import { ChatMessage } from '../types/global';
 
 export interface IntegratedMCPConfig {
   apiKey: string;
@@ -20,42 +16,116 @@ export interface IntegratedMCPConfig {
  * Basado en la documentación oficial: https://platform.openai.com/docs/guides/rate-limits
  */
 export const MODEL_LIMITS = {
-  // GPT-5 Series (más reciente y eficiente)
+  // GPT-5 Series (nuevos modelos)
   'gpt-5': {
-    tier1: { tpm: 500000, maxPerMessage: 12000, maxPerConversation: 30000 },
-    tier2: { tpm: 1000000, maxPerMessage: 20000, maxPerConversation: 50000 },
-    tier3: { tpm: 2000000, maxPerMessage: 30000, maxPerConversation: 80000 },
-    tier4: { tpm: 4000000, maxPerMessage: 50000, maxPerConversation: 120000 },
-    tier5: { tpm: 40000000, maxPerMessage: 100000, maxPerConversation: 200000 }
+    tier1: { tpm: 200000, maxPerMessage: 15000, maxPerConversation: 40000 },
+    tier2: { tpm: 1000000, maxPerMessage: 25000, maxPerConversation: 60000 },
+    tier3: { tpm: 2000000, maxPerMessage: 40000, maxPerConversation: 100000 },
+    tier4: { tpm: 5000000, maxPerMessage: 80000, maxPerConversation: 150000 },
+    tier5: { tpm: 50000000, maxPerMessage: 150000, maxPerConversation: 300000 }
+  },
+  'gpt-5-chat-latest': {
+    tier1: { tpm: 90000, maxPerMessage: 12000, maxPerConversation: 30000 },
+    tier2: { tpm: 450000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier3: { tpm: 900000, maxPerMessage: 30000, maxPerConversation: 80000 },
+    tier4: { tpm: 2250000, maxPerMessage: 50000, maxPerConversation: 120000 },
+    tier5: { tpm: 22500000, maxPerMessage: 100000, maxPerConversation: 200000 }
+  },
+  'gpt-5-codex': {
+    tier1: { tpm: 200000, maxPerMessage: 15000, maxPerConversation: 40000 },
+    tier2: { tpm: 1000000, maxPerMessage: 25000, maxPerConversation: 60000 },
+    tier3: { tpm: 2000000, maxPerMessage: 40000, maxPerConversation: 100000 },
+    tier4: { tpm: 5000000, maxPerMessage: 80000, maxPerConversation: 150000 },
+    tier5: { tpm: 50000000, maxPerMessage: 150000, maxPerConversation: 300000 }
   },
   'gpt-5-mini': {
+    tier1: { tpm: 400000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier2: { tpm: 2000000, maxPerMessage: 30000, maxPerConversation: 75000 },
+    tier3: { tpm: 4000000, maxPerMessage: 50000, maxPerConversation: 125000 },
+    tier4: { tpm: 10000000, maxPerMessage: 100000, maxPerConversation: 200000 },
+    tier5: { tpm: 100000000, maxPerMessage: 200000, maxPerConversation: 400000 }
+  },
+  'gpt-5-nano': {
+    tier1: { tpm: 400000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier2: { tpm: 2000000, maxPerMessage: 30000, maxPerConversation: 75000 },
+    tier3: { tpm: 4000000, maxPerMessage: 50000, maxPerConversation: 125000 },
+    tier4: { tpm: 10000000, maxPerMessage: 100000, maxPerConversation: 200000 },
+    tier5: { tpm: 100000000, maxPerMessage: 200000, maxPerConversation: 400000 }
+  },
+  'gpt-5-pro': {
+    tier1: { tpm: 90000, maxPerMessage: 12000, maxPerConversation: 30000 },
+    tier2: { tpm: 450000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier3: { tpm: 900000, maxPerMessage: 30000, maxPerConversation: 80000 },
+    tier4: { tpm: 2250000, maxPerMessage: 50000, maxPerConversation: 120000 },
+    tier5: { tpm: 22500000, maxPerMessage: 100000, maxPerConversation: 200000 }
+  },
+  // GPT-3.5 Turbo Series
+  'gpt-3.5-turbo': {
+    tier1: { tpm: 90000, maxPerMessage: 8000, maxPerConversation: 20000 },
+    tier2: { tpm: 2000000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier3: { tpm: 4000000, maxPerMessage: 30000, maxPerConversation: 80000 },
+    tier4: { tpm: 8000000, maxPerMessage: 50000, maxPerConversation: 120000 },
+    tier5: { tpm: 40000000, maxPerMessage: 100000, maxPerConversation: 200000 }
+  },
+  'gpt-3.5-turbo-instruct': {
+    tier1: { tpm: 40000, maxPerMessage: 8000, maxPerConversation: 20000 },
+    tier2: { tpm: 90000, maxPerMessage: 15000, maxPerConversation: 30000 },
+    tier3: { tpm: 180000, maxPerMessage: 25000, maxPerConversation: 50000 },
+    tier4: { tpm: 360000, maxPerMessage: 40000, maxPerConversation: 80000 },
+    tier5: { tpm: 1800000, maxPerMessage: 80000, maxPerConversation: 150000 }
+  },
+  // GPT-4 Series
+  'gpt-4': {
+    tier1: { tpm: 10000, maxPerMessage: 8000, maxPerConversation: 20000 },
+    tier2: { tpm: 40000, maxPerMessage: 15000, maxPerConversation: 35000 },
+    tier3: { tpm: 80000, maxPerMessage: 25000, maxPerConversation: 50000 },
+    tier4: { tpm: 300000, maxPerMessage: 40000, maxPerConversation: 80000 },
+    tier5: { tpm: 10000000, maxPerMessage: 80000, maxPerConversation: 150000 }
+  },
+  // GPT-4 Turbo Series
+  'gpt-4-turbo': {
+    tier1: { tpm: 150000, maxPerMessage: 12000, maxPerConversation: 30000 },
+    tier2: { tpm: 450000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier3: { tpm: 800000, maxPerMessage: 30000, maxPerConversation: 80000 },
+    tier4: { tpm: 2000000, maxPerMessage: 50000, maxPerConversation: 120000 },
+    tier5: { tpm: 30000000, maxPerMessage: 100000, maxPerConversation: 200000 }
+  },
+  // GPT-4.1 Series
+  'gpt-4.1': {
+    tier1: { tpm: 150000, maxPerMessage: 12000, maxPerConversation: 30000 },
+    tier2: { tpm: 450000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier3: { tpm: 800000, maxPerMessage: 30000, maxPerConversation: 80000 },
+    tier4: { tpm: 2000000, maxPerMessage: 50000, maxPerConversation: 120000 },
+    tier5: { tpm: 30000000, maxPerMessage: 100000, maxPerConversation: 200000 }
+  },
+  'gpt-4.1-mini': {
     tier1: { tpm: 500000, maxPerMessage: 15000, maxPerConversation: 40000 },
     tier2: { tpm: 2000000, maxPerMessage: 25000, maxPerConversation: 60000 },
     tier3: { tpm: 4000000, maxPerMessage: 40000, maxPerConversation: 100000 },
     tier4: { tpm: 10000000, maxPerMessage: 80000, maxPerConversation: 150000 },
     tier5: { tpm: 180000000, maxPerMessage: 150000, maxPerConversation: 300000 }
   },
-  'gpt-5-nano': {
-    tier1: { tpm: 200000, maxPerMessage: 8000, maxPerConversation: 20000 },
-    tier2: { tpm: 2000000, maxPerMessage: 15000, maxPerConversation: 40000 },
-    tier3: { tpm: 4000000, maxPerMessage: 25000, maxPerConversation: 60000 },
-    tier4: { tpm: 10000000, maxPerMessage: 50000, maxPerConversation: 100000 },
-    tier5: { tpm: 180000000, maxPerMessage: 100000, maxPerConversation: 200000 }
+  'gpt-4.1-nano': {
+    tier1: { tpm: 500000, maxPerMessage: 15000, maxPerConversation: 40000 },
+    tier2: { tpm: 2000000, maxPerMessage: 25000, maxPerConversation: 60000 },
+    tier3: { tpm: 4000000, maxPerMessage: 40000, maxPerConversation: 100000 },
+    tier4: { tpm: 10000000, maxPerMessage: 80000, maxPerConversation: 150000 },
+    tier5: { tpm: 180000000, maxPerMessage: 150000, maxPerConversation: 300000 }
   },
   // GPT-4o Series (modelos actuales)
   'gpt-4o': {
-    tier1: { tpm: 30000, maxPerMessage: 8000, maxPerConversation: 20000 },
-    tier2: { tpm: 450000, maxPerMessage: 15000, maxPerConversation: 35000 },
-    tier3: { tpm: 800000, maxPerMessage: 25000, maxPerConversation: 50000 },
-    tier4: { tpm: 2000000, maxPerMessage: 40000, maxPerConversation: 80000 },
-    tier5: { tpm: 30000000, maxPerMessage: 80000, maxPerConversation: 150000 }
+    tier1: { tpm: 150000, maxPerMessage: 12000, maxPerConversation: 30000 },
+    tier2: { tpm: 450000, maxPerMessage: 20000, maxPerConversation: 50000 },
+    tier3: { tpm: 800000, maxPerMessage: 30000, maxPerConversation: 80000 },
+    tier4: { tpm: 2000000, maxPerMessage: 50000, maxPerConversation: 120000 },
+    tier5: { tpm: 30000000, maxPerMessage: 100000, maxPerConversation: 200000 }
   },
   'gpt-4o-mini': {
-    tier1: { tpm: 200000, maxPerMessage: 12000, maxPerConversation: 25000 },
-    tier2: { tpm: 2000000, maxPerMessage: 20000, maxPerConversation: 40000 },
-    tier3: { tpm: 4000000, maxPerMessage: 30000, maxPerConversation: 60000 },
-    tier4: { tpm: 10000000, maxPerMessage: 50000, maxPerConversation: 100000 },
-    tier5: { tpm: 150000000, maxPerMessage: 100000, maxPerConversation: 200000 }
+    tier1: { tpm: 500000, maxPerMessage: 15000, maxPerConversation: 40000 },
+    tier2: { tpm: 2000000, maxPerMessage: 25000, maxPerConversation: 60000 },
+    tier3: { tpm: 4000000, maxPerMessage: 40000, maxPerConversation: 100000 },
+    tier4: { tpm: 10000000, maxPerMessage: 80000, maxPerConversation: 150000 },
+    tier5: { tpm: 150000000, maxPerMessage: 150000, maxPerConversation: 300000 }
   },
   // Fallback para modelos no reconocidos
   'default': {
@@ -315,19 +385,48 @@ export class IntegratedMCPService {
     messages: ChatMessage[],
     options?: { currentFolder?: string }
   ): Promise<MCPResponse> {
+    console.log(`[DEBUG] sendMessage called with ${messages.length} messages`);
+    
+    // Verificar caché de respuesta completa primero
+    const cachedResponse = cacheService.getCachedResponse(messages, options?.currentFolder);
+    if (cachedResponse) {
+      console.log('[Cache] Returning cached complete response');
+      return cachedResponse;
+    }
+    
     try {
       // Verificar si el último mensaje es una confirmación
       const lastMessage = messages[messages.length - 1];
       const isConfirmedMessage =
         lastMessage?.content?.startsWith('CONFIRMADO:');
 
-      let conversationMessages: any[] = messages.map(msg => ({
-        role: msg.role,
-        content: msg.content,
-      }));
+      // Verificar caché de conversación procesada
+      let conversationMessages: any[];
+      const cachedConversation = cacheService.getCachedConversation(messages, options?.currentFolder);
+      
+      if (cachedConversation) {
+        console.log('[Cache] Using cached conversation messages');
+        conversationMessages = cachedConversation.messages;
+      } else {
+        conversationMessages = messages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+        
+        // Cachear la conversación procesada
+        cacheService.setCachedConversation(messages, conversationMessages, options?.currentFolder);
+      }
 
-      // Obtener herramientas MCP en formato OpenAI
-      const tools = this.mcpService.getOpenAIFunctions().map(func => ({
+      // Obtener herramientas MCP con caché optimizado
+      const allTools = cacheService.getCachedTools(() => this.mcpService.getOpenAIFunctions());
+      
+      // Obtener herramientas relevantes basadas en el último mensaje
+      const lastMessageContent = lastMessage?.content || '';
+      const relevantTools = cacheService.getRelevantTools(lastMessageContent, allTools);
+      
+      console.log(`[Cache] Using ${relevantTools.length} relevant tools out of ${allTools.length} total tools`);
+      
+      const tools = relevantTools.map(func => ({
         type: 'function' as const,
         function: func,
       }));
@@ -344,6 +443,10 @@ export class IntegratedMCPService {
       while (iteration < maxIterations) {
         iteration++;
 
+        console.log(`[DEBUG] Sending request to OpenAI with model: ${this.model}`);
+        console.log(`[DEBUG] Tools available: ${tools.length}`);
+        console.log(`[DEBUG] Tools being sent:`, JSON.stringify(tools.map(t => t.function.name), null, 2));
+        
         const completion = await this.openai.chat.completions.create({
           model: this.model,
           messages: conversationMessages,
@@ -353,12 +456,20 @@ export class IntegratedMCPService {
           max_completion_tokens: 2000,
         });
 
+        console.log(`[DEBUG] OpenAI response:`, JSON.stringify(completion, null, 2));
+        console.log(`[DEBUG] OpenAI response choices:`, completion.choices?.length || 0);
+        console.log(`[DEBUG] OpenAI response first choice:`, JSON.stringify(completion.choices?.[0], null, 2));
+
         const choice = completion.choices[0];
         if (!choice?.message) {
+          console.error('[DEBUG] No choice or message in OpenAI response');
           throw new Error('No se recibió respuesta de OpenAI');
         }
 
         const message = choice.message;
+        console.log(`[DEBUG] Message content: "${message.content}"`);
+        console.log(`[DEBUG] Message tool_calls:`, message.tool_calls);
+        
         finalContent = message.content || '';
 
         // Si no hay tool_calls, hemos terminado
@@ -500,14 +611,20 @@ export class IntegratedMCPService {
         }
       }
 
-      return {
+      const response: MCPResponse = {
         content: finalContent,
         toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
       };
+
+      // Cachear la respuesta completa para futuras consultas similares
+      cacheService.setCachedResponse(messages, response, options?.currentFolder);
+      console.log('[Cache] Response cached for future use');
+
+      return response;
     } catch (error) {
       console.error('Error al comunicarse con OpenAI:', error);
       throw new Error(
-        `Error de OpenAI: ${error instanceof Error ? error.message : 'Error desconocido'}`
+        `Error de OpenAI: ${error instanceof Error ? error.message : 'Error desconocado'}`
       );
     }
   }

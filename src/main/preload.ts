@@ -1,10 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp?: Date;
-}
+import { ChatMessage } from '../types/global';
 
 export interface OpenAIResponse {
   success: boolean;
@@ -95,6 +90,72 @@ export interface ElectronAPI {
       deleteRows?: number[];
     }
   ) => Promise<{ success: boolean; data?: any; error?: string }>;
+  // Excel formula functions
+  readExcelWithFormulas: (
+    filePath: string,
+    sheetName?: string,
+    calculateFormulas?: boolean
+  ) => Promise<{
+    success: boolean;
+    data?: {
+      sheets: string[];
+      currentSheet: string;
+      data: any[];
+      formulaData: any[];
+      formulas: { cell: string; formula: string; value?: any }[];
+      rowCount: number;
+      formulaCount: number;
+      calculated: boolean;
+    };
+    error?: string;
+  }>;
+  addExcelFormulas: (
+    filePath: string,
+    formulas: {
+      sheetName?: string;
+      cellFormulas: { cell: string; formula: string }[];
+    }
+  ) => Promise<{
+    success: boolean;
+    data?: {
+      formulasAdded: number;
+      sheetName: string;
+    };
+    error?: string;
+  }>;
+  calculateExcelFormulas: (
+    filePath: string,
+    sheetName?: string
+  ) => Promise<{
+    success: boolean;
+    data?: {
+      sheetName: string;
+      rowCount: number;
+      calculated: boolean;
+    };
+    error?: string;
+  }>;
+  getExcelFormulasInfo: (
+    filePath: string,
+    sheetName?: string
+  ) => Promise<{
+    success: boolean;
+    data?: {
+      sheetName: string;
+      formulas: {
+        cell: string;
+        formula: string;
+        value?: any;
+        type?: string;
+        dependencies?: string[];
+      }[];
+      formulaCount: number;
+      formulaTypes: Record<string, number>;
+      totalCells: number;
+      formulaPercentage: string;
+    };
+    error?: string;
+  }>;
   // MCP Service functions (secure)
   mcpServiceInit: () => Promise<{ success: boolean; isInitialized: boolean; error?: string }>;
   mcpServiceSendMessage: (
@@ -115,6 +176,8 @@ export interface ElectronAPI {
   // File watcher functions
   startFileWatcher: (dirPath: string) => Promise<{ success: boolean; error?: string }>;
   stopFileWatcher: () => Promise<{ success: boolean; error?: string }>;
+  // Batch operations
+  batchExecute: (requests: { id: string; method: string; args: any[] }[]) => Promise<{ id: string; success: boolean; result?: any; error?: string }[]>;
   // Event listeners
   on: (channel: string, listener: (...args: any[]) => void) => void;
   off: (channel: string, listener: (...args: any[]) => void) => void;
@@ -172,6 +235,22 @@ const electronAPI: ElectronAPI = {
       deleteRows?: number[];
     }
   ) => ipcRenderer.invoke('excel-modify', filePath, modifications),
+
+  // Excel formula functions
+  readExcelWithFormulas: (filePath: string, sheetName?: string, calculateFormulas?: boolean) =>
+    ipcRenderer.invoke('excel-read-with-formulas', filePath, sheetName, calculateFormulas),
+  addExcelFormulas: (
+    filePath: string,
+    formulas: {
+      sheetName?: string;
+      cellFormulas: { cell: string; formula: string }[];
+    }
+  ) => ipcRenderer.invoke('excel-add-formulas', filePath, formulas),
+  calculateExcelFormulas: (filePath: string, sheetName?: string) =>
+    ipcRenderer.invoke('excel-calculate-formulas', filePath, sheetName),
+  getExcelFormulasInfo: (filePath: string, sheetName?: string) =>
+    ipcRenderer.invoke('excel-get-formulas-info', filePath, sheetName),
+
   // MCP Service functions (secure)
   mcpServiceInit: () => ipcRenderer.invoke('mcp-service-init'),
   mcpServiceSendMessage: (messages: ChatMessage[], options?: { currentFolder?: string }) =>
@@ -187,12 +266,15 @@ const electronAPI: ElectronAPI = {
   // File watcher functions
   startFileWatcher: (dirPath: string) => ipcRenderer.invoke('start-file-watcher', dirPath),
   stopFileWatcher: () => ipcRenderer.invoke('stop-file-watcher'),
+  // Batch operations
+  batchExecute: (requests: { id: string; method: string; args: any[] }[]) => 
+    ipcRenderer.invoke('batch-execute', requests),
   // Event listeners
   on: (channel: string, listener: (...args: any[]) => void) => {
     ipcRenderer.on(channel, listener);
   },
   off: (channel: string, listener: (...args: any[]) => void) => {
-    ipcRenderer.removeListener(channel, listener);
+    ipcRenderer.off(channel, listener);
   },
 };
 

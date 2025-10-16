@@ -79,6 +79,8 @@ export class ElectronMCPService {
    */
   getOpenAIFunctions() {
     const tools = this.getTools();
+    console.log(`[DEBUG] getOpenAIFunctions called, found ${tools.length} tools`);
+    console.log(`[DEBUG] Tool names:`, tools.map(t => t.name));
     return tools.map(tool => ({
       name: tool.name,
       description: tool.description,

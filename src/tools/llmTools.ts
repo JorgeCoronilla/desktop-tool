@@ -578,6 +578,159 @@ export class ExcelTools {
       };
     }
   }
+
+  /**
+   * Lee un archivo Excel con soporte completo de fórmulas
+   */
+  static async readExcelWithFormulas(
+    filePath: string,
+    sheetName?: string,
+    calculateFormulas: boolean = true
+  ): Promise<ToolResult> {
+    try {
+      if (window.electronAPI && window.electronAPI.readExcelWithFormulas) {
+        const res = await window.electronAPI.readExcelWithFormulas(
+          filePath,
+          sheetName,
+          calculateFormulas
+        );
+        if (res.success && res.data) {
+          const rows = Array.isArray(res.data.data)
+            ? res.data.data.length
+            : res.data.rowCount;
+          return {
+            success: true,
+            data: res.data,
+            message: `Excel con fórmulas leído: hoja ${res.data.currentSheet}, ${rows} filas, ${calculateFormulas ? 'fórmulas calculadas' : 'fórmulas preservadas'}`,
+          };
+        }
+        return {
+          success: false,
+          error: res.error || 'Error desconocido al leer Excel con fórmulas',
+        };
+      }
+      return {
+        success: false,
+        error: 'API de Electron no disponible para leer Excel con fórmulas',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Error al leer Excel con fórmulas: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+      };
+    }
+  }
+
+  /**
+   * Agrega fórmulas a un archivo Excel
+   */
+  static async addExcelFormulas(
+    filePath: string,
+    formulas: {
+      sheetName?: string;
+      cellFormulas: { cell: string; formula: string }[];
+    }
+  ): Promise<ToolResult> {
+    try {
+      if (window.electronAPI && window.electronAPI.addExcelFormulas) {
+        const res = await window.electronAPI.addExcelFormulas(filePath, formulas);
+        if (res.success) {
+          return {
+            success: true,
+            data: res.data,
+            message: `Fórmulas agregadas exitosamente: ${formulas.cellFormulas.length} fórmulas`,
+          };
+        }
+        return {
+          success: false,
+          error: res.error || 'Error desconocido al agregar fórmulas',
+        };
+      }
+      return {
+        success: false,
+        error: 'API de Electron no disponible para agregar fórmulas',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Error al agregar fórmulas: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+      };
+    }
+  }
+
+  /**
+   * Calcula todas las fórmulas en un archivo Excel
+   */
+  static async calculateExcelFormulas(
+    filePath: string,
+    sheetName?: string
+  ): Promise<ToolResult> {
+    try {
+      if (window.electronAPI && window.electronAPI.calculateExcelFormulas) {
+        const res = await window.electronAPI.calculateExcelFormulas(
+          filePath,
+          sheetName
+        );
+        if (res.success) {
+          return {
+            success: true,
+            data: res.data,
+            message: 'Fórmulas calculadas exitosamente',
+          };
+        }
+        return {
+          success: false,
+          error: res.error || 'Error desconocido al calcular fórmulas',
+        };
+      }
+      return {
+        success: false,
+        error: 'API de Electron no disponible para calcular fórmulas',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Error al calcular fórmulas: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+      };
+    }
+  }
+
+  /**
+   * Obtiene información detallada sobre las fórmulas en un archivo Excel
+   */
+  static async getExcelFormulasInfo(
+    filePath: string,
+    sheetName?: string
+  ): Promise<ToolResult> {
+    try {
+      if (window.electronAPI && window.electronAPI.getExcelFormulasInfo) {
+        const res = await window.electronAPI.getExcelFormulasInfo(
+          filePath,
+          sheetName
+        );
+        if (res.success) {
+          return {
+            success: true,
+            data: res.data,
+            message: `Información de fórmulas obtenida: ${res.data.formulaCount || 0} fórmulas encontradas`,
+          };
+        }
+        return {
+          success: false,
+          error: res.error || 'Error desconocido al obtener información de fórmulas',
+        };
+      }
+      return {
+        success: false,
+        error: 'API de Electron no disponible para obtener información de fórmulas',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Error al obtener información de fórmulas: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+      };
+    }
+  }
 }
 
 /**
@@ -820,6 +973,43 @@ export const AVAILABLE_TOOLS: FileSystemTool[] = [
       modifications: 'object',
     },
     execute: ExcelTools.modifyExcel,
+  },
+  {
+    name: 'read_excel_with_formulas',
+    description: 'Lee un archivo Excel con soporte completo de fórmulas, puede calcular o preservar fórmulas',
+    parameters: { 
+      filePath: 'string', 
+      sheetName: 'string?', 
+      calculateFormulas: 'boolean?' 
+    },
+    execute: ExcelTools.readExcelWithFormulas,
+  },
+  {
+    name: 'add_excel_formulas',
+    description: 'Agrega fórmulas a celdas específicas en un archivo Excel',
+    parameters: {
+      filePath: 'string',
+      formulas: 'object', // { sheetName?: string, cellFormulas: { cell: string, formula: string }[] }
+    },
+    execute: ExcelTools.addExcelFormulas,
+  },
+  {
+    name: 'calculate_excel_formulas',
+    description: 'Calcula todas las fórmulas en un archivo Excel y devuelve los resultados',
+    parameters: { 
+      filePath: 'string', 
+      sheetName: 'string?' 
+    },
+    execute: ExcelTools.calculateExcelFormulas,
+  },
+  {
+    name: 'get_excel_formulas_info',
+    description: 'Obtiene información detallada sobre las fórmulas existentes en un archivo Excel',
+    parameters: { 
+      filePath: 'string', 
+      sheetName: 'string?' 
+    },
+    execute: ExcelTools.getExcelFormulasInfo,
   },
   {
     name: 'get_task_state',

@@ -1,6 +1,5 @@
 import {
   ElectronAPI,
-  ChatMessage as PreloadChatMessage,
   OpenAIResponse,
   OpenAIConfig,
 } from '../main/preload';
@@ -19,7 +18,7 @@ export interface ChatMessage {
 }
 
 // Re-export types from preload for convenience
-export type { PreloadChatMessage, OpenAIResponse, OpenAIConfig };
+export type { OpenAIResponse, OpenAIConfig };
 
 export interface FileItem {
   name: string;
