@@ -1,4 +1,5 @@
 import { ChatMessage } from '../types/global';
+import { logger } from './loggerService';
 
 export interface MCPMessage {
   role: 'system' | 'user' | 'assistant';
@@ -24,7 +25,7 @@ export class SecureMCPServiceWrapper implements MCPServiceWrapper {
       }
       return false;
     } catch (error) {
-      console.error('Error checking MCP service initialization:', error);
+      logger.error('Error checking MCP service initialization', error);
       return false;
     }
   }

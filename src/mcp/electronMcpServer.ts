@@ -4,18 +4,23 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
 import { fromPath as pdfToPicFromPath } from 'pdf2pic';
-import { createWorker } from 'tesseract.js';
 import xlsxCalc from 'xlsx-calc';
 
-// Variables globales para pdf-parse
-let PDFParseClass: any = null;
+// Variables globales para lazy loading
+let pdfParse: any = null;
+let tesseractWorker: any = null;
 
 async function initializePdfParse() {
-  if (!PDFParseClass) {
+  if (!pdfParse) {
     const pdfParseModule = await import('pdf-parse');
-    PDFParseClass = pdfParseModule.default || pdfParseModule;
+    pdfParse = pdfParseModule.default || pdfParseModule;
   }
-  return PDFParseClass;
+  return pdfParse;
+}
+
+async function initializeTesseract() {
+  const tesseractModule = await import('tesseract.js');
+  return tesseractModule.createWorker;
 }
 
 export interface MCPToolCall {
@@ -584,21 +589,12 @@ export class ElectronMCPServer {
       }
       
       // Inicializar pdf-parse si no está disponible
-      if (!PDFParseClass) {
+      if (!pdfParse) {
         await initializePdfParse();
       }
 
-      const parser = new PDFParseClass({ data: dataBuffer });
-      
-      let data;
-      try {
-        data = await parser.getText();
-      } finally {
-        // Limpiar recursos
-        if (parser.destroy) {
-          await parser.destroy();
-        }
-      }
+      // pdf-parse es una función, no una clase
+      const data = await pdfParse(dataBuffer);
       
       // Si no se extrajo texto, intentar OCR automáticamente
       if (!data.text || data.text.trim().length === 0) {
@@ -654,7 +650,13 @@ export class ElectronMCPServer {
       
       // Leer el PDF completo
       const dataBuffer = fs.readFileSync(filePath);
-      const data = await PDFParseClass(dataBuffer);
+      
+      // Inicializar pdf-parse si no está disponible
+      if (!pdfParse) {
+        await initializePdfParse();
+      }
+      
+      const data = await pdfParse(dataBuffer);
       
       if (!data.text || data.text.trim().length === 0) {
         throw new Error('No se pudo extraer texto del PDF - puede ser un PDF escaneado');
@@ -764,6 +766,7 @@ export class ElectronMCPServer {
       
       // Crear worker de Tesseract con timeout
       console.log('[OCR] Inicializando Tesseract...');
+      const createWorker = await initializeTesseract();
       const worker = await createWorker('eng');
       console.log('[OCR] Tesseract inicializado, procesando imagen...');
       
@@ -881,17 +884,9 @@ export class ElectronMCPServer {
       
       await initializePdfParse();
       const dataBuffer = fs.readFileSync(resolvedPath);
-      const parser = new PDFParseClass({ data: dataBuffer });
-      let pdfData;
       
-      try {
-        pdfData = await parser.getText();
-      } finally {
-        // Limpiar el parser
-        if (parser && typeof parser.destroy === 'function') {
-          await parser.destroy();
-        }
-      }
+      // pdf-parse es una función, no una clase
+      const pdfData = await pdfParse(dataBuffer);
       
       metadata.totalPages = pdfData.total || pdfData.numpages || 1;
       console.log(`📊 [PDF_SMART] PDF analizado: ${metadata.totalPages} páginas, ${pdfData.text?.length || 0} caracteres de texto directo`);
@@ -988,12 +983,11 @@ export class ElectronMCPServer {
       // Si no tenemos el total de páginas en metadata, intentar obtenerlo
       if (!metadata.totalPages) {
         try {
-          if (!PDFParseClass) {
+          if (!pdfParse) {
             await initializePdfParse();
           }
           const dataBuffer = fs.readFileSync(resolvedPath);
-          const pdfData = new PDFParseClass({ data: dataBuffer });
-          const parsedData = await pdfData.getText();
+          const parsedData = await pdfParse(dataBuffer);
           totalPages = parsedData.total || parsedData.numpages || 1;
           metadata.totalPages = totalPages;
           console.log(`📊 [PDF_SMART_OCR] Total de páginas detectado: ${totalPages}`);
@@ -1091,6 +1085,7 @@ export class ElectronMCPServer {
 
           // Crear worker de Tesseract
           console.log(`[OCR] Iniciando reconocimiento OCR para página ${pageNum}...`);
+          const createWorker = await initializeTesseract();
           const worker = await createWorker('spa');
           
           try {

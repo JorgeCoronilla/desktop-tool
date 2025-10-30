@@ -1,5 +1,7 @@
 import { ChatMessage } from '../types/global';
 import crypto from 'crypto';
+import { compressionService } from './compressionService';
+import { logger } from './loggerService';
 
 export interface CacheEntry {
   messagesHash: string;
@@ -106,12 +108,12 @@ export class CacheService {
     
     // Verificar si el caché de herramientas es válido
     if (this.toolsCache && (now - this.toolsCache.timestamp) < this.TOOLS_CACHE_TTL) {
-      console.log('[Cache] Using cached tools');
+      logger.debug('Using cached tools');
       return this.toolsCache.tools;
     }
 
     // Computar nuevas herramientas
-    console.log('[Cache] Computing new tools cache');
+    logger.debug('Computing new tools cache');
     const tools = getAllTools();
     this.toolsCache = {
       tools,
@@ -167,7 +169,7 @@ export class CacheService {
     const cached = this.conversationCache.get(hash);
     
     if (cached && (Date.now() - cached.timestamp) < this.CONVERSATION_CACHE_TTL) {
-      console.log('[Cache] Using cached conversation');
+      logger.debug('Using cached conversation', { hash });
       return cached;
     }
 
@@ -192,7 +194,7 @@ export class CacheService {
       timestamp: Date.now()
     });
 
-    console.log('[Cache] Cached conversation with hash:', hash);
+    logger.debug('Cached conversation', { hash });
   }
 
   /**
@@ -203,7 +205,7 @@ export class CacheService {
     const cached = this.responseCache.get(hash);
     
     if (cached && (Date.now() - cached.timestamp) < this.RESPONSE_CACHE_TTL) {
-      console.log('[Cache] Using cached response');
+      logger.debug('Using cached response', { hash });
       return cached.response;
     }
 
@@ -227,7 +229,7 @@ export class CacheService {
       timestamp: Date.now()
     });
 
-    console.log('[Cache] Cached response with hash:', hash);
+    logger.debug('Cached response', { hash });
   }
 
   /**
@@ -239,7 +241,7 @@ export class CacheService {
     // Limpiar caché de herramientas
     if (this.toolsCache && (now - this.toolsCache.timestamp) >= this.TOOLS_CACHE_TTL) {
       this.toolsCache = null;
-      console.log('[Cache] Cleaned expired tools cache');
+      logger.debug('Cleaned expired tools cache');
     }
 
     // Limpiar caché de conversaciones
@@ -264,7 +266,7 @@ export class CacheService {
     this.toolsCache = null;
     this.conversationCache.clear();
     this.responseCache.clear();
-    console.log('[Cache] All caches cleared');
+    logger.info('All caches cleared');
   }
 
   /**

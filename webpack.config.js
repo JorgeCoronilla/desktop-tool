@@ -3,11 +3,13 @@ const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const ReactRefreshWebpackPlugin = require('@pmmmwh/react-refresh-webpack-plugin');
 const ReactRefreshTypeScript = require('react-refresh-typescript');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 const dotenv = require('dotenv');
 const env = dotenv.config().parsed || {};
 
 module.exports = (envArgs, argv) => {
   const isDev = argv && argv.mode === 'development';
+  const isAnalyze = process.env.ANALYZE === 'true' || argv.analyze;
 
   return {
     mode: isDev ? 'development' : 'production',
@@ -59,7 +61,9 @@ module.exports = (envArgs, argv) => {
       extensions: ['.tsx', '.ts', '.js'],
       fallback: {
         "global": false,
-        "events": require.resolve('events/')
+        "events": require.resolve('events/'),
+        "path": false,
+        "fs": false
       }
     },
     // Do not externalize Node built-ins for renderer; allow bundling/polyfills for dev server
@@ -68,8 +72,28 @@ module.exports = (envArgs, argv) => {
       __filename: false
     },
     output: {
-      filename: 'bundle.js',
+      filename: isDev ? 'bundle.js' : '[name].[contenthash].js',
       path: path.resolve(__dirname, 'dist'),
+      clean: true,
+    },
+    optimization: {
+      splitChunks: {
+        chunks: 'all',
+        cacheGroups: {
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+          },
+          react: {
+            test: /[\\/]node_modules[\\/](react|react-dom)[\\/]/,
+            name: 'react',
+            chunks: 'all',
+          },
+        },
+      },
+      usedExports: true,
+      sideEffects: false,
     },
     plugins: [
       new HtmlWebpackPlugin({
@@ -81,6 +105,11 @@ module.exports = (envArgs, argv) => {
         'process.env.OPENAI_MODEL': JSON.stringify(env.OPENAI_MODEL || 'gpt-4o'),
       }),
       ...(isDev ? [new ReactRefreshWebpackPlugin()] : []),
+      ...(isAnalyze ? [new BundleAnalyzerPlugin({
+        analyzerMode: 'static',
+        openAnalyzer: false,
+        reportFilename: 'bundle-report.html',
+      })] : []),
     ],
     ...(isDev ? {
       devServer: {

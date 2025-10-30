@@ -1,8 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
 import './Chat.css';
-import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '../../types/global';
 import { useDebounce, useDebouncedCallback } from '../../hooks/useDebounce';
+import { logger } from '../../services/loggerService';
+
+// Lazy loading de ReactMarkdown para reducir el bundle inicial
+const ReactMarkdown = React.lazy(() => import('react-markdown'));
 
 interface ChatProps {
   messages: ChatMessage[];
@@ -13,7 +16,32 @@ interface ChatProps {
   onChangeTokenLimit: (n: number) => void;
 }
 
-const Chat: React.FC<ChatProps> = ({
+// Componente optimizado para mensajes individuales
+const MessageItem = React.memo<{
+  message: ChatMessage;
+  formatTime: (date: Date) => string;
+}>(({ message, formatTime }) => (
+  <div
+    className={`message ${
+      message.role === 'user' ? 'user-message' : 'assistant-message'
+    }`}
+  >
+    <div className={'message-content'}>
+      <Suspense fallback={<div>Cargando mensaje...</div>}>
+        <ReactMarkdown>
+          {message.content}
+        </ReactMarkdown>
+      </Suspense>
+    </div>
+    <div className={'message-time'}>
+      {formatTime(message.timestamp)}
+    </div>
+  </div>
+));
+
+MessageItem.displayName = 'MessageItem';
+
+const Chat: React.FC<ChatProps> = React.memo(({
   messages,
   onSendMessage,
   isLoading,
@@ -26,33 +54,92 @@ const Chat: React.FC<ChatProps> = ({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   
-  // Debounce del input para optimizar la experiencia del usuario
-  const debouncedInputValue = useDebounce(inputValue, 300);
-  
   // Estado para prevenir múltiples envíos rápidos
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Debouncing para optimizar el rendimiento
+  const debouncedInputValue = useDebounce(inputValue, 150);
+  const debouncedTokenLimit = useDebounce(tokenLimit, 300);
+
+  // Callback debounced para cambios de token limit
+  const debouncedOnChangeTokenLimit = useDebouncedCallback(
+    (value: number) => onChangeTokenLimit(value),
+    300
+  );
+
   // Usamos clases globales, no CSS Modules
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight; // asegura scroll sólo dentro del contenedor de mensajes
-  };
+    
+    // Función recursiva para intentar scroll hasta que funcione
+    const attemptScroll = (attempts = 0) => {
+      if (attempts > 10) return; // Máximo 10 intentos
+      
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      const targetScrollTop = scrollHeight - clientHeight;
+      
+      // Si ya estamos en el final, no hacer nada
+      if (Math.abs(scrollTop - targetScrollTop) < 5) return;
+      
+      el.scrollTop = targetScrollTop;
+      
+      // Verificar si el scroll funcionó, si no, intentar de nuevo
+      requestAnimationFrame(() => {
+        const newScrollTop = el.scrollTop;
+        if (Math.abs(newScrollTop - targetScrollTop) > 5) {
+          attemptScroll(attempts + 1);
+        }
+      });
+    };
+    
+    // Usar múltiples estrategias para asegurar el scroll
+    requestAnimationFrame(() => {
+      attemptScroll();
+      
+      // Backup: intentar de nuevo después de un pequeño delay
+      setTimeout(() => attemptScroll(), 50);
+      setTimeout(() => attemptScroll(), 100);
+    });
+  }, []);
 
+  // Efecto principal para manejar nuevos mensajes
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) {
-      scrollToBottom();
+      // Si no hay elemento, intentar hacer scroll después de que se monte
+      setTimeout(scrollToBottom, 100);
       return;
     }
+    
+    // Verificar si estamos cerca del final antes de la actualización
     const { scrollTop, scrollHeight, clientHeight } = el;
     const distanceToBottom = scrollHeight - (scrollTop + clientHeight);
-    const nearBottomThreshold = 120; // px
-    const nearBottom = distanceToBottom <= nearBottomThreshold;
-    setIsNearBottom(nearBottom);
-    if (nearBottom) scrollToBottom();
-  }, [messages]);
+    const nearBottomThreshold = 120;
+    const wasNearBottom = distanceToBottom <= nearBottomThreshold;
+    
+    // Actualizar el estado de isNearBottom
+    setIsNearBottom(wasNearBottom);
+    
+    // Si estamos cerca del final o es el primer mensaje, hacer scroll
+    if (wasNearBottom || messages.length === 1) {
+      // Usar múltiples timeouts para manejar diferentes tiempos de renderizado
+      setTimeout(scrollToBottom, 0);
+      setTimeout(scrollToBottom, 50);
+      setTimeout(scrollToBottom, 150);
+      setTimeout(scrollToBottom, 300);
+    }
+  }, [messages, scrollToBottom]);
+
+  // Efecto adicional para manejar cambios en el estado de carga
+  useEffect(() => {
+    if (!isLoading && isNearBottom) {
+      // Cuando termina la carga y estamos cerca del final, hacer scroll
+      setTimeout(scrollToBottom, 100);
+      setTimeout(scrollToBottom, 300);
+    }
+  }, [isLoading, isNearBottom, scrollToBottom]);
 
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -74,11 +161,11 @@ const Chat: React.FC<ChatProps> = ({
   // Función optimizada de envío con debouncing y prevención de múltiples envíos
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('[Chat] handleSubmit called with inputValue:', inputValue);
+    logger.debug('Chat handleSubmit called', { inputValue });
     
     // Prevenir múltiples envíos rápidos
     if (!inputValue.trim() || isLoading || isSubmitting) {
-      console.log('[Chat] Skipping submit - empty input, loading, or already submitting:', { 
+      logger.debug('Chat skipping submit', { 
         inputValue: inputValue.trim(), 
         isLoading, 
         isSubmitting 
@@ -86,34 +173,51 @@ const Chat: React.FC<ChatProps> = ({
       return;
     }
 
-    console.log('[Chat] About to call onSendMessage with:', inputValue);
+    logger.debug('Chat about to call onSendMessage', { inputValue });
     
     setIsSubmitting(true);
     try {
       await onSendMessage(inputValue.trim());
-      console.log('[Chat] onSendMessage completed successfully');
+      logger.debug('Chat onSendMessage completed successfully');
       setInputValue('');
     } catch (error) {
-      console.error('[Chat] Error in onSendMessage:', error);
+      logger.error('Chat error in onSendMessage', error);
     } finally {
       setIsSubmitting(false);
     }
   }, [inputValue, isLoading, isSubmitting, onSendMessage]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    console.log('[Chat] Key pressed:', e.key, 'with modifiers:', { ctrlKey: e.ctrlKey, metaKey: e.metaKey });
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      console.log('[Chat] Enter + Ctrl/Cmd detected, calling handleSubmit');
-      handleSubmit(e);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    logger.debug('Chat key pressed', { 
+      key: e.key, 
+      modifiers: { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey } 
+    });
+    
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      logger.debug('Chat Enter detected, calling handleSubmit');
+      e.preventDefault();
+      handleSubmit(e as any);
     }
-  };
+  }, [handleSubmit]);
 
-  const formatTime = (date: Date) => {
+  // Memoizar la función formatTime para evitar recreaciones
+  const formatTime = useCallback((date: Date) => {
     return date.toLocaleTimeString('es-ES', {
       hour: '2-digit',
       minute: '2-digit',
     });
-  };
+  }, []);
+
+  // Memoizar la lista de mensajes renderizados
+  const renderedMessages = useMemo(() => {
+    return messages.map(message => (
+      <MessageItem
+        key={message.id}
+        message={message}
+        formatTime={formatTime}
+      />
+    ));
+  }, [messages, formatTime]);
 
   return (
     <div className={'chat-container'}>
@@ -125,23 +229,7 @@ const Chat: React.FC<ChatProps> = ({
             Selecciona una carpeta y pregúntame qué necesitas hacer.
           </div>
         ) : (
-          messages.map(message => (
-            <div
-              key={message.id}
-              className={`message ${
-                message.role === 'user' ? 'user-message' : 'assistant-message'
-              }`}
-            >
-              <div className={'message-content'}>
-                <ReactMarkdown>
-                  {message.content}
-                </ReactMarkdown>
-              </div>
-              <div className={'message-time'}>
-                {formatTime(message.timestamp)}
-              </div>
-            </div>
-          ))
+          renderedMessages
         )}
 
         {isLoading && (
@@ -157,10 +245,10 @@ const Chat: React.FC<ChatProps> = ({
             type="button"
             className={'scrollToBottomButton'}
             onClick={scrollToBottom}
-            aria-label="Ir al final"
-            title="Ir al final"
+            aria-label="Ir al final del chat"
+            title="Ir al final del chat"
           >
-            ↓ Ir al final
+            ↓
           </button>
         )}
       </div>
@@ -180,7 +268,7 @@ const Chat: React.FC<ChatProps> = ({
             <button
               type="submit"
               className={'send-button'}
-              disabled={!inputValue.trim() || isLoading || isSubmitting}
+              disabled={!debouncedInputValue.trim() || isLoading || isSubmitting}
             >
               {isSubmitting ? 'Enviando...' : 'Enviar'}
             </button>
@@ -200,7 +288,7 @@ const Chat: React.FC<ChatProps> = ({
                 step={50}
                 value={tokenLimit}
                 onChange={e =>
-                  onChangeTokenLimit(parseInt(e.target.value || '0', 10))
+                  debouncedOnChangeTokenLimit(parseInt(e.target.value || '0', 10))
                 }
                 title="Límite de tokens"
                 className={'token-input actions-token-input'}
@@ -211,6 +299,8 @@ const Chat: React.FC<ChatProps> = ({
       </div>
     </div>
   );
-};
+});
+
+Chat.displayName = 'Chat';
 
 export default Chat;

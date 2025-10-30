@@ -1,8 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo, Suspense } from 'react';
 import './Layout.css';
-import Chat from '../Chat/Chat';
-import FileExplorer from '../FileExplorer/FileExplorer';
+import { logger } from '../../services/loggerService';
 import { AppState, ChatMessage } from '../../types/global';
+
+// Lazy loading de componentes para code splitting
+const Chat = React.lazy(() => import('../Chat/Chat'));
+const FileExplorer = React.lazy(() => import('../FileExplorer/FileExplorer'));
 
 interface LayoutProps {
   appState: AppState;
@@ -27,8 +30,8 @@ const Layout: React.FC<LayoutProps> = ({
   onNavigateBack,
   onRefreshSubfolders,
 }) => {
-  console.log('Layout component rendering...');
-  console.log('[Layout] Passing to FileExplorer:', {
+  logger.debug('Layout component rendering');
+  logger.debug('Layout passing to FileExplorer', {
     filesCount: appState.totalFilesCount || 0,
     currentFolder: appState.currentFolder,
     isLoading: appState.isFileLoading,
@@ -102,14 +105,16 @@ const Layout: React.FC<LayoutProps> = ({
         <div className={'chat-panel'}>
           <div className={'layout-chat-header'}>💬 Conversación</div>
           <div className={'chat-content'}>
-            <Chat
-              messages={appState.chatMessages}
-              onSendMessage={onSendMessage}
-              isLoading={appState.isChatLoading}
-              onCancel={onCancelStream}
-              tokenLimit={tokenLimit}
-              onChangeTokenLimit={onChangeTokenLimit}
-            />
+            <Suspense fallback={<div style={{ padding: '20px', textAlign: 'center' }}>Cargando chat...</div>}>
+              <Chat
+                messages={appState.chatMessages}
+                onSendMessage={onSendMessage}
+                isLoading={appState.isChatLoading}
+                onCancel={onCancelStream}
+                tokenLimit={tokenLimit}
+                onChangeTokenLimit={onChangeTokenLimit}
+              />
+            </Suspense>
           </div>
         </div>
 
@@ -187,14 +192,16 @@ const Layout: React.FC<LayoutProps> = ({
                 })}
             </div>
           )}
-          <FileExplorer
-            files={appState.files}
-            currentFolder={appState.currentFolder}
-            isLoading={appState.isFileLoading}
-            onNavigateToFolder={onNavigateToFolder}
-            totalFilesCount={appState.totalFilesCount}
-            onRefreshSubfolders={onRefreshSubfolders}
-          />
+          <Suspense fallback={<div style={{ padding: '20px', textAlign: 'center' }}>Cargando explorador...</div>}>
+            <FileExplorer
+              files={appState.files}
+              currentFolder={appState.currentFolder}
+              isLoading={appState.isFileLoading}
+              onNavigateToFolder={onNavigateToFolder}
+              totalFilesCount={appState.totalFilesCount}
+              onRefreshSubfolders={onRefreshSubfolders}
+            />
+          </Suspense>
         </div>
       </div>
     </div>

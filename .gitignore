@@ -7,6 +7,7 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+release/
 
 # Environment variables
 .env
@@ -25,3 +26,15 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Code signing certificates and keys
+certificates/
+*.p12
+*.pfx
+*.crt
+*.key
+*.pem
+.env.signing
+
+# Temporary signing files
+temp-cert.*

@@ -3,6 +3,8 @@
  * Manages connection pooling for external services to optimize resource usage
  */
 
+import { logger } from './loggerService';
+
 export interface PoolConfig {
   maxConnections: number;
   minConnections: number;
@@ -59,7 +61,7 @@ class ConnectionPoolService {
 
     this.cleanupIntervals.set(serviceName, cleanupInterval);
 
-    console.log(`[ConnectionPool] Initialized pool for ${serviceName}:`, poolConfig);
+    logger.info(`Initialized pool for ${serviceName}`, { serviceName, poolConfig });
   }
 
   /**
@@ -78,7 +80,7 @@ class ConnectionPoolService {
     if (availableConnection) {
       availableConnection.inUse = true;
       availableConnection.lastUsed = Date.now();
-      console.log(`[ConnectionPool] Reusing connection ${availableConnection.id} for ${serviceName}`);
+      logger.debug(`Reusing connection ${availableConnection.id} for ${serviceName}`, { connectionId: availableConnection.id, serviceName });
       return availableConnection;
     }
 
@@ -86,12 +88,12 @@ class ConnectionPoolService {
     if (pool.length < config.maxConnections) {
       const newConnection = await this.createConnection(serviceName);
       pool.push(newConnection);
-      console.log(`[ConnectionPool] Created new connection ${newConnection.id} for ${serviceName}`);
+      logger.info(`Created new connection ${newConnection.id} for ${serviceName}`, { connectionId: newConnection.id, serviceName });
       return newConnection;
     }
 
     // Wait for an available connection
-    console.log(`[ConnectionPool] Pool full for ${serviceName}, waiting for available connection`);
+    logger.warn(`Pool full for ${serviceName}, waiting for available connection`, { serviceName, poolSize: pool.length, maxConnections: config.maxConnections });
     return new Promise((resolve, reject) => {
       const pending = this.pendingRequests.get(serviceName)!;
       pending.push({ resolve, reject });
@@ -128,7 +130,7 @@ class ConnectionPoolService {
       resolve(connection);
     }
 
-    console.log(`[ConnectionPool] Released connection ${connectionId} for ${serviceName}`);
+    logger.debug(`Released connection ${connectionId} for ${serviceName}`, { connectionId, serviceName });
   }
 
   /**
@@ -154,7 +156,7 @@ class ConnectionPoolService {
         // This would be implemented based on MCP service requirements
         break;
       default:
-        console.warn(`[ConnectionPool] Unknown service: ${serviceName}`);
+        logger.warn(`Unknown service: ${serviceName}`, { serviceName });
     }
 
     return connection;
@@ -181,7 +183,7 @@ class ConnectionPoolService {
       const index = pool.indexOf(connection);
       if (index !== -1) {
         pool.splice(index, 1);
-        console.log(`[ConnectionPool] Removed idle connection ${connection.id} for ${serviceName}`);
+        logger.debug(`Removed idle connection ${connection.id} for ${serviceName}`, { connectionId: connection.id, serviceName });
       }
     }
   }
@@ -246,7 +248,7 @@ class ConnectionPoolService {
     }
 
     this.configs.delete(serviceName);
-    console.log(`[ConnectionPool] Destroyed pool for ${serviceName}`);
+    logger.info(`Destroyed pool for ${serviceName}`, { serviceName });
   }
 
   /**

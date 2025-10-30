@@ -1,17 +1,25 @@
 {
   "name": "desktop-helper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Asistente de escritorio para operaciones de archivos con IA",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main/main.js",
   "scripts": {
     "build": "webpack --mode production",
     "build:main": "tsc src/main/*.ts --outDir dist/main --target es2020 --module commonjs --moduleResolution node --esModuleInterop --allowSyntheticDefaultImports",
+    "build:all": "npm run build && npm run build:main",
+    "build:win": "npm run build:all && electron-builder --win",
+    "build:win:improved": "node scripts/build-windows-improved.js",
+    "build:win:signed": "node scripts/build-windows-signed.js",
+    "build:mac": "npm run build:all && electron-builder --mac",
+    "build:linux": "npm run build:all && electron-builder --linux",
+    "dist": "npm run build:all && electron-builder",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "webpack serve --mode development",
     "dev:proxy": "node server/server.js",
     "dev:web": "concurrently \"npm run dev:renderer\" \"npm run dev:proxy\"",
     "dev:main": "npm run build:main && cross-env NODE_ENV=development electron dist/main/main/main.js",
     "start": "npm run build && npm run build:main && electron dist/main/main/main.js",
+    "analyze": "ANALYZE=true webpack --mode production && open dist/bundle-report.html",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,md,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,md,json}\"",
     "format:staged": "prettier --write"
@@ -35,9 +43,9 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "css-loader": "^7.1.2",
-    "dotenv": "^17.2.3",
     "dotenv-cli": "^10.0.0",
     "electron": "^38.2.0",
+    "electron-builder": "^26.0.12",
     "html-webpack-plugin": "^5.6.4",
     "prettier": "^3.6.2",
     "react-refresh": "^0.18.0",
@@ -46,6 +54,7 @@
     "ts-loader": "^9.5.4",
     "typescript": "^5.9.3",
     "webpack": "^5.102.0",
+    "webpack-bundle-analyzer": "^4.10.2",
     "webpack-cli": "^6.0.1",
     "webpack-dev-server": "^5.2.2"
   },
@@ -57,13 +66,16 @@
     "chokidar": "^4.0.3",
     "cors": "^2.8.5",
     "csv-parser": "^3.2.0",
+    "dotenv": "^17.2.3",
     "events": "^3.3.0",
     "express": "^5.1.0",
     "fs-extra": "^11.3.2",
     "global": "^4.4.0",
     "openai": "^6.1.0",
-    "pdf-parse": "^2.3.0",
+    "pdf-parse": "^1.1.1",
     "pdf2pic": "^3.2.0",
+    "pino": "^10.0.0",
+    "pino-pretty": "^13.1.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^9.0.0",
@@ -71,5 +83,62 @@
     "tesseract.js": "^6.0.1",
     "xlsx": "^0.18.5",
     "xlsx-calc": "^0.9.2"
+  },
+  "build": {
+    "appId": "com.desktop-helper.app",
+    "productName": "Desktop Helper",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "Desktop Helper"
+    }
   }
 }

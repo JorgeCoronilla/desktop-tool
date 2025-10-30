@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4F46E5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7C3AED;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#gradient)" stroke="#1F2937" stroke-width="8"/>
+  
+  <!-- File icon -->
+  <rect x="180" y="140" width="120" height="160" rx="8" fill="white" opacity="0.9"/>
+  <rect x="180" y="140" width="120" height="40" rx="8" fill="#F3F4F6"/>
+  
+  <!-- Folder icon -->
+  <path d="M140 200 L140 320 L280 320 L280 240 L220 240 L200 220 L140 220 Z" fill="white" opacity="0.8"/>
+  <path d="M140 200 L140 220 L200 220 L220 240 L280 240 L280 220 L200 220 L180 200 Z" fill="#E5E7EB"/>
+  
+  <!-- AI Brain/Gear icon -->
+  <circle cx="350" cy="200" r="35" fill="white" opacity="0.9"/>
+  <circle cx="350" cy="200" r="20" fill="#4F46E5"/>
+  <circle cx="350" cy="200" r="8" fill="white"/>
+  
+  <!-- Connection lines -->
+  <line x1="300" y1="220" x2="315" y2="200" stroke="white" stroke-width="3" opacity="0.7"/>
+  <line x1="280" y1="260" x2="320" y2="220" stroke="white" stroke-width="3" opacity="0.7"/>
+  
+  <!-- Text -->
+  <text x="256" y="380" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="32" font-weight="bold">DH</text>
+</svg>

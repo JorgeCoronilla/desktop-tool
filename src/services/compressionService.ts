@@ -1,3 +1,7 @@
+import * as zlib from 'zlib';
+import { promisify } from 'util';
+import { logger } from './loggerService';
+
 /**
  * Compression Service
  * Handles compression and decompression of large data transfers between frontend and backend
@@ -69,7 +73,11 @@ class CompressionService {
       const compressedBase64 = btoa(String.fromCharCode(...compressedArray));
       const compressedSize = compressedArray.length;
 
-      console.log(`[CompressionService] Compressed ${originalSize} bytes to ${compressedSize} bytes (${((1 - compressedSize / originalSize) * 100).toFixed(1)}% reduction)`);
+      logger.info('Data compressed successfully', {
+        originalSize,
+        compressedSize,
+        reductionPercent: ((1 - compressedSize / originalSize) * 100).toFixed(1)
+      });
 
       return {
         compressed: true,
@@ -78,7 +86,7 @@ class CompressionService {
         compressedSize
       };
     } catch (error) {
-      console.warn('[CompressionService] Compression failed, returning uncompressed data:', error);
+      logger.warn('Compression failed, returning uncompressed data', error);
       return {
         compressed: false,
         data: jsonString,
@@ -134,8 +142,8 @@ class CompressionService {
       const decompressedString = new TextDecoder().decode(decompressedArray);
       return JSON.parse(decompressedString);
     } catch (error) {
-      console.error('[CompressionService] Decompression failed:', error);
-      throw new Error('Failed to decompress data');
+      logger.error('Decompression failed', error);
+      throw new Error(`Decompression failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

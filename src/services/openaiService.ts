@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { logger } from './loggerService';
 
 /**
  * Modelos disponibles de OpenAI
@@ -73,7 +74,7 @@ export class OpenAIService {
         'No se pudo obtener respuesta del LLM'
       );
     } catch (error) {
-      console.error('Error al comunicarse con OpenAI:', error);
+      logger.error('Error communicating with OpenAI', error);
       throw new Error(
         `Error de OpenAI: ${error instanceof Error ? error.message : 'Error desconocido'}`
       );
@@ -105,7 +106,7 @@ export class OpenAIService {
         }
       }
     } catch (error) {
-      console.error('Error en stream de OpenAI:', error);
+      logger.error('Error in OpenAI stream', error);
       throw new Error(
         `Error de OpenAI Stream: ${error instanceof Error ? error.message : 'Error desconocido'}`
       );

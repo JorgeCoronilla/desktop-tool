@@ -2,6 +2,10 @@ import OpenAI from 'openai';
 import { ElectronMCPService } from '../mcp/electronMcpService';
 import { cacheService } from './cacheService';
 import { ChatMessage } from '../types/global';
+import { logger } from './loggerService';
+import { MCPService } from './mcpService';
+import { CacheService } from './cacheService';
+import { compressionService } from './compressionService';
 
 export interface IntegratedMCPConfig {
   apiKey: string;
@@ -346,11 +350,11 @@ export class IntegratedMCPService {
     ];
 
     const isDestructive = destructiveTools.includes(toolName);
-    console.log(
-      `[DEBUG] Checking if "${toolName}" is destructive:`,
-      isDestructive
-    );
-    console.log(`[DEBUG] Available destructive tools:`, destructiveTools);
+    logger.debug('Checking if tool is destructive', {
+      toolName,
+      isDestructive,
+      destructiveTools
+    });
 
     return isDestructive;
   }
@@ -385,12 +389,14 @@ export class IntegratedMCPService {
     messages: ChatMessage[],
     options?: { currentFolder?: string }
   ): Promise<MCPResponse> {
-    console.log(`[DEBUG] sendMessage called with ${messages.length} messages`);
+    logger.debug('IntegratedMCP sendMessage called', { 
+      messagesCount: messages.length 
+    });
     
     // Verificar caché de respuesta completa primero
     const cachedResponse = cacheService.getCachedResponse(messages, options?.currentFolder);
     if (cachedResponse) {
-      console.log('[Cache] Returning cached complete response');
+      logger.debug('IntegratedMCP returning cached complete response');
       return cachedResponse;
     }
     
@@ -405,7 +411,7 @@ export class IntegratedMCPService {
       const cachedConversation = cacheService.getCachedConversation(messages, options?.currentFolder);
       
       if (cachedConversation) {
-        console.log('[Cache] Using cached conversation messages');
+        logger.debug('IntegratedMCP using cached conversation messages');
         conversationMessages = cachedConversation.messages;
       } else {
         conversationMessages = messages.map(msg => ({
@@ -424,7 +430,10 @@ export class IntegratedMCPService {
       const lastMessageContent = lastMessage?.content || '';
       const relevantTools = cacheService.getRelevantTools(lastMessageContent, allTools);
       
-      console.log(`[Cache] Using ${relevantTools.length} relevant tools out of ${allTools.length} total tools`);
+      logger.debug('Using relevant tools from cache', {
+        relevantCount: relevantTools.length,
+        totalCount: allTools.length
+      });
       
       const tools = relevantTools.map(func => ({
         type: 'function' as const,
@@ -443,9 +452,11 @@ export class IntegratedMCPService {
       while (iteration < maxIterations) {
         iteration++;
 
-        console.log(`[DEBUG] Sending request to OpenAI with model: ${this.model}`);
-        console.log(`[DEBUG] Tools available: ${tools.length}`);
-        console.log(`[DEBUG] Tools being sent:`, JSON.stringify(tools.map(t => t.function.name), null, 2));
+        logger.debug('Sending request to OpenAI', {
+          model: this.model,
+          toolsCount: tools.length,
+          toolNames: tools.map(t => t.function.name)
+        });
         
         const completion = await this.openai.chat.completions.create({
           model: this.model,
@@ -456,19 +467,22 @@ export class IntegratedMCPService {
           max_completion_tokens: 2000,
         });
 
-        console.log(`[DEBUG] OpenAI response:`, JSON.stringify(completion, null, 2));
-        console.log(`[DEBUG] OpenAI response choices:`, completion.choices?.length || 0);
-        console.log(`[DEBUG] OpenAI response first choice:`, JSON.stringify(completion.choices?.[0], null, 2));
+        logger.debug('OpenAI response received', {
+          choicesCount: completion.choices?.length || 0,
+          hasMessage: !!completion.choices?.[0]?.message
+        });
 
         const choice = completion.choices[0];
         if (!choice?.message) {
-          console.error('[DEBUG] No choice or message in OpenAI response');
+          logger.error('No choice or message in OpenAI response');
           throw new Error('No se recibió respuesta de OpenAI');
         }
 
         const message = choice.message;
-        console.log(`[DEBUG] Message content: "${message.content}"`);
-        console.log(`[DEBUG] Message tool_calls:`, message.tool_calls);
+        logger.debug('Processing OpenAI message', {
+          hasContent: !!message.content,
+          toolCallsCount: message.tool_calls?.length || 0
+        });
         
         finalContent = message.content || '';
 
@@ -493,7 +507,7 @@ export class IntegratedMCPService {
             try {
               functionArgs = JSON.parse(toolCall.function.arguments);
             } catch (error) {
-              console.error('Error parsing tool arguments:', error);
+              logger.error('Error parsing tool arguments', error);
               continue;
             }
 
@@ -503,22 +517,17 @@ export class IntegratedMCPService {
               this.isDestructiveOperation(functionName, functionArgs) &&
               !isConfirmedMessage
             ) {
-              console.log(
-                `[DEBUG] Destructive operation detected: ${functionName}`
-              );
-              console.log(
-                `[DEBUG] Has confirmation callback:`,
-                !!this.confirmationCallback
-              );
+              logger.debug('Destructive operation detected', {
+                functionName,
+                hasConfirmationCallback: !!this.confirmationCallback
+              });
 
               if (this.confirmationCallback) {
                 const confirmationMessage = this.getConfirmationMessage(
                   functionName,
                   functionArgs
                 );
-                console.log(
-                  `[DEBUG] Using confirmation callback for: ${functionName}`
-                );
+                logger.debug('Using confirmation callback', { functionName });
                 const confirmed = await this.confirmationCallback(
                   functionName,
                   functionArgs,
@@ -534,17 +543,16 @@ export class IntegratedMCPService {
                 }
               } else {
                 // Si no hay callback de confirmación, solicitar confirmación al usuario
-                console.log(
-                  `[DEBUG] No confirmation callback, returning needsConfirmation for: ${functionName}`
-                );
+                logger.debug('No confirmation callback, returning needsConfirmation', {
+                  functionName
+                });
                 const confirmationMessage = this.getConfirmationMessage(
                   functionName,
                   functionArgs
                 );
-                console.log(
-                  `[DEBUG] Confirmation message:`,
-                  confirmationMessage
-                );
+                logger.debug('Confirmation message created', {
+                  message: confirmationMessage
+                });
 
                 return {
                   content: `Se requiere confirmación para la operación "${functionName}".`,
@@ -557,9 +565,9 @@ export class IntegratedMCPService {
                 };
               }
             } else if (isConfirmedMessage) {
-              console.log(
-                `[DEBUG] Operation already confirmed, proceeding with: ${functionName}`
-              );
+              logger.debug('Operation already confirmed, proceeding', {
+                functionName
+              });
             }
 
             // Ejecutar la herramienta MCP
@@ -588,7 +596,7 @@ export class IntegratedMCPService {
                 tool_call_id: toolCall.id,
               });
             } catch (error) {
-              console.error(`Error executing tool ${functionName}:`, error);
+              logger.error('Error executing tool', { functionName, error });
               const errorResult = {
                 error:
                   error instanceof Error ? error.message : 'Error desconocido',
@@ -618,13 +626,13 @@ export class IntegratedMCPService {
 
       // Cachear la respuesta completa para futuras consultas similares
       cacheService.setCachedResponse(messages, response, options?.currentFolder);
-      console.log('[Cache] Response cached for future use');
+      logger.debug('Response cached for future use');
 
       return response;
     } catch (error) {
-      console.error('Error al comunicarse con OpenAI:', error);
+      logger.error('IntegratedMCP error communicating with OpenAI', error);
       throw new Error(
-        `Error de OpenAI: ${error instanceof Error ? error.message : 'Error desconocado'}`
+        `Error de OpenAI: ${error instanceof Error ? error.message : 'Error desconocido'}`
       );
     }
   }
@@ -643,7 +651,7 @@ export class IntegratedMCPService {
 
       return !!testCompletion.choices[0]?.message;
     } catch (error) {
-      console.error('Health check failed:', error);
+      logger.error('IntegratedMCP health check failed', error);
       return false;
     }
   }

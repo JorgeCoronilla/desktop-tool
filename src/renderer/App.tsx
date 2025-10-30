@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import Layout from '../components/Layout/Layout';
+import React, { useState, useEffect, Suspense } from 'react';
+import ErrorBoundary from '../components/ErrorBoundary';
+
+// Lazy loading de componentes principales para code splitting
+const Layout = React.lazy(() => import('../components/Layout/Layout'));
+import { logger } from '../services/loggerService';
 import {
   AppState,
   FileItem,
@@ -29,8 +33,8 @@ Usuario: "Crea un archivo llamado notas.txt con el contenido 'Hola mundo'"
 Asistente: Voy a crear el archivo notas.txt para ti con el contenido que solicitas.`;
 
 const App: React.FC = () => {
-  console.log('App component rendering...');
-  console.log('window.electronAPI:', window.electronAPI);
+  logger.debug('App component rendering');
+  logger.debug('App electronAPI status', { available: !!window.electronAPI });
 
   // Instancia del MCPService real
   const [mcpService, setMcpService] = useState<MCPServiceWrapper | null>(null);
@@ -726,17 +730,32 @@ Respuesta:`;
 
   return (
     <>
-      <Layout
-        appState={appState}
-        onFolderSelect={handleFolderSelect}
-        onSendMessage={handleSendMessage}
-        onCancelStream={handleCancelStream}
-        tokenLimit={tokenLimit}
-        onChangeTokenLimit={setTokenLimit}
-        onNavigateToFolder={handleNavigateToFolder}
-        onNavigateBack={handleNavigateBack}
-        onRefreshSubfolders={handleRefreshSubfolders}
-      />
+      <ErrorBoundary>
+        <Suspense fallback={
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            fontSize: '18px',
+            color: '#666'
+          }}>
+            Cargando aplicación...
+          </div>
+        }>
+          <Layout
+            appState={appState}
+            onFolderSelect={handleFolderSelect}
+            onSendMessage={handleSendMessage}
+            onCancelStream={handleCancelStream}
+            tokenLimit={tokenLimit}
+            onChangeTokenLimit={setTokenLimit}
+            onNavigateToFolder={handleNavigateToFolder}
+            onNavigateBack={handleNavigateBack}
+            onRefreshSubfolders={handleRefreshSubfolders}
+          />
+        </Suspense>
+      </ErrorBoundary>
       
       {/* Modal de confirmación */}
       {pendingConfirmation && (

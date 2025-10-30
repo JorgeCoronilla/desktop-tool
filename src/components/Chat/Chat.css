@@ -10,10 +10,15 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  scroll-behavior: smooth;
+  /* Asegurar que el scroll funcione correctamente */
+  position: relative;
+  height: 100%;
 }
 
 .message {
@@ -163,18 +168,31 @@
 /* Floating button to scroll to bottom */
 .scrollToBottomButton {
   position: absolute;
-  right: 16px;
-  bottom: 16px;
+  right: 20px;
+  bottom: 20px;
   background-color: var(--btn-primary-bg);
   color: var(--btn-primary-text);
   border: none;
-  border-radius: 999px;
-  padding: 8px 12px;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
   cursor: pointer;
-  font-size: 12px;
-  box-shadow: var(--chat-bubble-shadow);
+  font-size: 16px;
+  font-weight: bold;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .scrollToBottomButton:hover {
   background-color: var(--btn-primary-hover-bg);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.scrollToBottomButton:active {
+  transform: translateY(0);
 }

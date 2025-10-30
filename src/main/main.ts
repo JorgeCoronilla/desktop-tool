@@ -2,10 +2,10 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 const chokidar = require('chokidar');
+import { logger } from '../services/loggerService';
 import * as XLSX from 'xlsx';
 import * as xlsxCalc from 'xlsx-calc';
 import { fromPath as pdfToPicFromPath } from 'pdf2pic';
-import { createWorker } from 'tesseract.js';
 import * as dotenv from 'dotenv';
 import { createOpenAIService, ChatMessage as OpenAIChatMessage } from '../services/openaiService';
 import { ElectronMCPService } from '../mcp/electronMcpService';
@@ -43,6 +43,11 @@ async function initializePdfParse() {
   return PDFParseClass;
 }
 
+async function initializeTesseract() {
+  const tesseractModule = await import('tesseract.js');
+  return tesseractModule.createWorker;
+}
+
 // Cargar variables de entorno
 dotenv.config();
 
@@ -59,21 +64,19 @@ function ensureOpenAIInitialized(): void {
     const key = process.env.OPENAI_API_KEY;
     const model = process.env.OPENAI_MODEL || 'gpt-4o';
     if (key && !openaiService) {
-      console.log(
-        '[OpenAI] Detectada API key en entorno. Inicializando servicio...'
-      );
+      logger.info('OpenAI Service initialization', {
+        apiKeyDefined: 'Defined',
+        model
+      });
       openaiService = createOpenAIService(key, model);
-      console.log('[OpenAI] Servicio inicializado correctamente.');
+      logger.info('OpenAI Service initialized successfully');
     } else if (!key) {
-      console.warn('[OpenAI] OPENAI_API_KEY no está definida en el entorno.');
+      logger.warn('OPENAI_API_KEY not defined in environment');
     } else {
-      console.log('[OpenAI] Servicio ya estaba inicializado.');
+      logger.info('OpenAI Service already initialized');
     }
   } catch (e) {
-    console.error(
-      '[OpenAI] Error inicializando automáticamente:',
-      e instanceof Error ? e.message : e
-    );
+    logger.error('Error initializing OpenAI Service automatically', e);
   }
 }
 
@@ -81,20 +84,20 @@ function ensureIntegratedMCPServiceInitialized(): void {
   if (!integratedMcpService) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      console.warn('[IntegratedMCP] No se encontró OPENAI_API_KEY en el entorno');
+      logger.warn('IntegratedMCP: OPENAI_API_KEY not found in environment');
       return;
     }
 
-    console.log('[IntegratedMCP] Inicializando IntegratedMCPService...');
+    logger.info('Initializing IntegratedMCPService');
     try {
       integratedMcpService = new IntegratedMCPService({
         apiKey,
         model: process.env.OPENAI_MODEL || 'gpt-4o',
         tier: 2 // Usar Tier 2 por defecto para mejores límites
       });
-      console.log('[IntegratedMCP] IntegratedMCPService inicializado correctamente.');
+      logger.info('IntegratedMCPService initialized successfully');
     } catch (error) {
-      console.error('[IntegratedMCP] Error inicializando IntegratedMCPService:', error);
+      logger.error('Error initializing IntegratedMCPService', error);
       integratedMcpService = null;
     }
   }
@@ -167,18 +170,18 @@ function createWindow(): void {
   mainWindow.webContents.on(
     'console-message',
     (level, message, line, sourceId) => {
-      console.log(`[Renderer ${level}]`, message);
+      logger.debug('Renderer console message', { level, message, line, sourceId });
     }
   );
 
   // Registrar eventos de carga para diagnosticar fallos
   mainWindow.webContents.on('did-finish-load', () => {
-    console.log('Renderer: did-finish-load');
+    logger.info('Renderer finished loading');
   });
   mainWindow.webContents.on(
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedURL) => {
-      console.error('Renderer: did-fail-load', {
+      logger.error('Renderer failed to load', {
         errorCode,
         errorDescription,
         validatedURL,
@@ -247,7 +250,7 @@ function startWatchingDirectory(dirPath: string): void {
   // Stop any existing watcher
   stopWatchingDirectory();
   
-  console.log(`[FileWatcher] Starting to watch: ${dirPath}`);
+  logger.info('Starting file watcher', { dirPath });
   
   currentWatcher = chokidar.watch(dirPath, {
     ignored: /(^|[\/\\])\../, // ignore dotfiles
@@ -260,42 +263,42 @@ function startWatchingDirectory(dirPath: string): void {
 
   // File/directory added
   currentWatcher.on('add', (filePath) => {
-    console.log(`[FileWatcher] File added: ${filePath}`);
+    logger.debug('File added', { filePath });
     notifyFileSystemChange('add', filePath);
   });
 
   // File changed
   currentWatcher.on('change', (filePath) => {
-    console.log(`[FileWatcher] File changed: ${filePath}`);
+    logger.debug('File changed', { filePath });
     notifyFileSystemChange('change', filePath);
   });
 
   // File/directory removed
   currentWatcher.on('unlink', (filePath) => {
-    console.log(`[FileWatcher] File removed: ${filePath}`);
+    logger.debug('File removed', { filePath });
     notifyFileSystemChange('unlink', filePath);
   });
 
   // Directory added
   currentWatcher.on('addDir', (dirPath) => {
-    console.log(`[FileWatcher] Directory added: ${dirPath}`);
+    logger.debug('Directory added', { dirPath });
     notifyFileSystemChange('addDir', dirPath);
   });
 
   // Directory removed
   currentWatcher.on('unlinkDir', (dirPath) => {
-    console.log(`[FileWatcher] Directory removed: ${dirPath}`);
+    logger.debug('Directory removed', { dirPath });
     notifyFileSystemChange('unlinkDir', dirPath);
   });
 
   currentWatcher.on('error', (error) => {
-    console.error('[FileWatcher] Error:', error);
+    logger.error('File watcher error', error);
   });
 }
 
 function stopWatchingDirectory(): void {
   if (currentWatcher) {
-    console.log(`[FileWatcher] Stopping watcher for: ${currentWatchedPath}`);
+    logger.info('Stopping file watcher', { watchedPath: currentWatchedPath });
     currentWatcher.close();
     currentWatcher = null;
     currentWatchedPath = null;
@@ -327,7 +330,7 @@ ipcMain.handle('read-directory', async (_, dirPath: string) => {
     
     return result;
   } catch (error) {
-    console.error('Error reading directory:', error);
+    logger.error('Error reading directory', { dirPath, error });
     return [];
   }
 });
@@ -341,9 +344,9 @@ ipcMain.handle('get-file-stats', async (_, filePath: string) => {
       isDirectory: stats.isDirectory(),
     };
   } catch (error) {
-    console.error('Error getting file stats:', error);
-    return null;
-  }
+      logger.error('Error getting file stats', { filePath, error });
+      return null;
+    }
 });
 
 ipcMain.handle('count-files-recursively', async (_, dirPath: string) => {
@@ -363,7 +366,7 @@ ipcMain.handle('fs-read-text', async (_, filePath: string) => {
     const data = await fs.promises.readFile(filePath, 'utf-8');
     return { success: true, data };
   } catch (error) {
-    console.error('fs-read-text error:', error);
+    logger.error('Error reading text file', { filePath, error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido',
@@ -378,7 +381,7 @@ ipcMain.handle(
       await fs.promises.writeFile(filePath, content, 'utf-8');
       return { success: true };
     } catch (error) {
-      console.error('fs-write-text error:', error);
+      logger.error('Error writing text file', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -392,12 +395,12 @@ ipcMain.handle('fs-delete', async (_, targetPath: string) => {
     await fs.promises.rm(targetPath, { recursive: true, force: true });
     return { success: true };
   } catch (error) {
-    console.error('fs-delete error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Error desconocido',
-    };
-  }
+      logger.error('Error deleting file', { targetPath, error });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
 });
 
 ipcMain.handle('fs-copy', async (_, sourcePath: string, destPath: string) => {
@@ -405,12 +408,12 @@ ipcMain.handle('fs-copy', async (_, sourcePath: string, destPath: string) => {
     await fs.promises.cp(sourcePath, destPath, { recursive: true });
     return { success: true };
   } catch (error) {
-    console.error('fs-copy error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Error desconocido',
-    };
-  }
+      logger.error('Error copying file', { sourcePath, destPath, error });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
 });
 
 ipcMain.handle('fs-move', async (_, sourcePath: string, destPath: string) => {
@@ -418,7 +421,7 @@ ipcMain.handle('fs-move', async (_, sourcePath: string, destPath: string) => {
     await fs.promises.rename(sourcePath, destPath);
     return { success: true };
   } catch (error) {
-    console.error('fs-move error:', error);
+    logger.error('Error moving file', { sourcePath, destPath, error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido',
@@ -431,12 +434,12 @@ ipcMain.handle('fs-mkdir', async (_, dirPath: string) => {
     await fs.promises.mkdir(dirPath, { recursive: true });
     return { success: true };
   } catch (error) {
-    console.error('fs-mkdir error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Error desconocido',
-    };
-  }
+      logger.error('Error creating directory', { dirPath, error });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
 });
 
 // IPC: Lectura real de PDFs usando pdf-parse
@@ -474,12 +477,12 @@ ipcMain.handle('pdf-read', async (_, filePath: string) => {
       }
     }
   } catch (error) {
-    console.error('pdf-read error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Error desconocido',
-    };
-  }
+      logger.error('Error reading PDF', { filePath, error });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      };
+    }
 });
 
 // IPC: OCR de PDF usando pdf2pic + tesseract.js
@@ -513,6 +516,7 @@ ipcMain.handle('pdf-ocr', async (_, filePath: string, lang: string = 'eng') => {
       quality: 100,
     });
 
+    const createWorker = await initializeTesseract();
     const worker = await createWorker();
     // Reinitialize el worker con el idioma solicitado
     await worker.reinitialize(lang);
@@ -545,7 +549,7 @@ ipcMain.handle('pdf-ocr', async (_, filePath: string, lang: string = 'eng') => {
       message: `OCR completado: ${numPages} páginas procesadas`,
     };
   } catch (error) {
-    console.error('pdf-ocr error:', error);
+    logger.error('Error performing PDF OCR', { filePath, error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido',
@@ -579,7 +583,7 @@ ipcMain.handle(
         },
       };
     } catch (error) {
-      console.error('excel-read error:', error);
+      logger.error('Error reading Excel file', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -598,7 +602,7 @@ ipcMain.handle(
       XLSX.writeFile(workbook, filePath);
       return { success: true };
     } catch (error) {
-      console.error('excel-write error:', error);
+      logger.error('Error writing Excel file', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -662,7 +666,7 @@ ipcMain.handle(
       XLSX.writeFile(workbook, filePath);
       return { success: true, data: { rowCount: rows.length } };
     } catch (error) {
-      console.error('excel-modify error:', error);
+      logger.error('Error modifying Excel file', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -734,7 +738,7 @@ ipcMain.handle(
         },
       };
     } catch (error) {
-      console.error('excel-read-with-formulas error:', error);
+      logger.error('Error reading Excel file with formulas', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -803,7 +807,7 @@ ipcMain.handle(
         }
       };
     } catch (error) {
-      console.error('excel-add-formulas error:', error);
+      logger.error('Error adding formulas to Excel file', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -831,7 +835,7 @@ ipcMain.handle(
       try {
         xlsxCalc(workbook);
       } catch (calcError) {
-        console.error('Error calculando fórmulas:', calcError);
+        logger.error('Error calculating formulas', { filePath, error: calcError });
         return {
           success: false,
           error: `Error calculando fórmulas: ${calcError instanceof Error ? calcError.message : 'Error desconocido'}`
@@ -853,7 +857,7 @@ ipcMain.handle(
         }
       };
     } catch (error) {
-      console.error('excel-calculate-formulas error:', error);
+      logger.error('Error in excel-calculate-formulas', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -930,7 +934,7 @@ ipcMain.handle(
         }
       };
     } catch (error) {
-      console.error('excel-get-formulas-info error:', error);
+      logger.error('Error getting Excel formulas info', { filePath, error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Error desconocido',
@@ -957,7 +961,7 @@ ipcMain.handle('init-openai', async (_, apiKey?: string) => {
     );
     return { success: true, message: 'OpenAI inicializado correctamente' };
   } catch (error) {
-    console.error('Error inicializando OpenAI:', error);
+    logger.error('Error initializing OpenAI', { error });
     return {
       success: false,
       message: error instanceof Error ? error.message : 'Error desconocido',
@@ -976,7 +980,7 @@ ipcMain.handle('send-message-to-openai', async (_, messages: any[]) => {
     const response = await openaiService.sendMessage(openaiMessages);
     return { success: true, response };
   } catch (error) {
-    console.error('Error enviando mensaje a OpenAI:', error);
+    logger.error('Error sending message to OpenAI', { error });
     return {
       success: false,
       message: error instanceof Error ? error.message : 'Error desconocido',
@@ -1034,7 +1038,7 @@ ipcMain.handle('mcp-service-init', async () => {
       isInitialized: !!integratedMcpService 
     };
   } catch (error) {
-    console.error('[IntegratedMCP] Error en mcp-service-init:', error);
+    logger.error('IntegratedMCP error in mcp-service-init', { error });
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Error desconocido',
@@ -1061,7 +1065,7 @@ ipcMain.handle('mcp-service-send-message', async (_, messages: any[], options?: 
       response 
     };
   } catch (error) {
-    console.error('[IntegratedMCP] Error en mcp-service-send-message:', error);
+    logger.error('IntegratedMCP error in mcp-service-send-message', { error });
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Error desconocido' 
@@ -1085,7 +1089,7 @@ ipcMain.handle('mcp-service-check-health', async () => {
       isHealthy 
     };
   } catch (error) {
-    console.error('[IntegratedMCP] Error en mcp-service-check-health:', error);
+    logger.error('IntegratedMCP error in mcp-service-check-health', { error });
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Error desconocido' 
@@ -1109,7 +1113,7 @@ ipcMain.handle('mcp-service-get-tools', async () => {
       tools 
     };
   } catch (error) {
-    console.error('[IntegratedMCP] Error en mcp-service-get-tools:', error);
+    logger.error('IntegratedMCP error in mcp-service-get-tools', { error });
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Error desconocido' 
@@ -1123,7 +1127,7 @@ ipcMain.handle('mcp-call-tool', async (_, toolName: string, arguments_: Record<s
     const result = await mcpService.callTool(toolName, arguments_, options);
     return result;
   } catch (error) {
-    console.error('Error calling MCP tool:', error);
+    logger.error('Error calling MCP tool', { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -1136,7 +1140,7 @@ ipcMain.handle('mcp-get-tools', async () => {
     const tools = mcpService.getTools();
     return { success: true, tools };
   } catch (error) {
-    console.error('Error getting MCP tools:', error);
+    logger.error('Error getting MCP tools', { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -1149,7 +1153,7 @@ ipcMain.handle('mcp-get-tool-documentation', async () => {
     const documentation = mcpService.generateToolDocumentation();
     return { success: true, documentation };
   } catch (error) {
-    console.error('Error getting MCP tool documentation:', error);
+    logger.error('Error getting MCP tool documentation', { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -1162,7 +1166,7 @@ ipcMain.handle('mcp-get-openai-functions', async () => {
     const functions = mcpService.getOpenAIFunctions();
     return { success: true, functions };
   } catch (error) {
-    console.error('Error getting OpenAI functions:', error);
+    logger.error('Error getting OpenAI functions', { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -1176,7 +1180,7 @@ ipcMain.handle('start-file-watcher', async (_, dirPath: string) => {
     startWatchingDirectory(dirPath);
     return { success: true };
   } catch (error) {
-    console.error('Error starting file watcher:', error);
+    logger.error('Error starting file watcher', { error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -1189,7 +1193,7 @@ ipcMain.handle('stop-file-watcher', async () => {
     stopWatchingDirectory();
     return { success: true };
   } catch (error) {
-    console.error('Error stopping file watcher:', error);
+    logger.error('Error stopping file watcher', { error });
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Error desconocido' 

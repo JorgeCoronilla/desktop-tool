@@ -1,6 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import './FileExplorer.css';
 import { FileItem } from '../../types/global';
+import { logger } from '../../services/loggerService';
 // import { MOCK_TREE } from './mockData'; // Comentado: retiramos mock del árbol
 
 interface FileExplorerProps {
@@ -18,16 +19,110 @@ interface TreeNode extends FileItem {
   level?: number;
 }
 
-const FileExplorer: React.FC<FileExplorerProps> = ({ files, currentFolder, isLoading, onNavigateToFolder, totalFilesCount, onRefreshSubfolders }) => {
-  console.log('[FileExplorer] Component rendering with:', {
-    filesCount: totalFilesCount || 0,
-    currentFolder,
-    isLoading,
-    filesArray: files
-  });
-  console.log('[FileExplorer] Files names:', files.map(f => f.name));
+// Componente optimizado para elementos de archivo individuales
+const FileItemComponent = React.memo<{
+  file: FileItem;
+  level: number;
+  isExpanded: boolean;
+  children: FileItem[];
+  onToggleFolder: (folderPath: string) => void;
+  onFileClick: (file: FileItem) => void;
+  onFileDoubleClick: (file: FileItem) => void;
+  getFileIcon: (fileName: string, isDirectory: boolean, isExpanded?: boolean) => React.ReactElement;
+  formatFileSize: (size?: number) => string;
+  currentStyles: any;
+}>(({ 
+  file, 
+  level, 
+  isExpanded, 
+  children, 
+  onToggleFolder, 
+  onFileClick, 
+  onFileDoubleClick, 
+  getFileIcon, 
+  formatFileSize, 
+  currentStyles 
+}) => (
+  <div key={file.path}>
+    <div
+      className={currentStyles.treeItem}
+      style={{ paddingLeft: `${level * 20}px` }}
+    >
+      {file.isDirectory && (
+        <button
+          className={currentStyles.expandButton}
+          onClick={() => onToggleFolder(file.path)}
+          aria-label={isExpanded ? 'Colapsar carpeta' : 'Expandir carpeta'}
+        >
+          <span
+            className={currentStyles.expandIcon}
+            style={{
+              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s ease',
+              display: 'inline-block',
+            }}
+          >
+            ▶
+          </span>
+        </button>
+      )}
+      <button
+        className={currentStyles.fileItem}
+        onClick={() => onFileClick(file)}
+        onDoubleClick={() => onFileDoubleClick(file)}
+        title={file.path}
+        style={{ flex: 1, marginLeft: file.isDirectory ? '0' : '20px' }}
+      >
+        {getFileIcon(file.name, file.isDirectory, isExpanded)}
+        <span className={currentStyles.fileName}>{file.name}</span>
+        {!file.isDirectory && file.size && (
+          <span className={currentStyles.fileSize}>
+            {formatFileSize(file.size)}
+          </span>
+        )}
+      </button>
+    </div>
 
+    {file.isDirectory && isExpanded && children.length > 0 && (
+      <div>
+        {children
+          .sort((a, b) => {
+            if (a.isDirectory && !b.isDirectory) return -1;
+            if (!a.isDirectory && b.isDirectory) return 1;
+            return a.name.localeCompare(b.name);
+          })
+          .map(child => (
+            <FileItemComponent
+              key={child.path}
+              file={child}
+              level={level + 1}
+              isExpanded={false} // Los hijos no están expandidos por defecto
+              children={[]}
+              onToggleFolder={onToggleFolder}
+              onFileClick={onFileClick}
+              onFileDoubleClick={onFileDoubleClick}
+              getFileIcon={getFileIcon}
+              formatFileSize={formatFileSize}
+              currentStyles={currentStyles}
+            />
+          ))}
+      </div>
+    )}
+  </div>
+));
+
+FileItemComponent.displayName = 'FileItemComponent';
+
+const FileExplorer: React.FC<FileExplorerProps> = React.memo(({ files, currentFolder, isLoading, onNavigateToFolder, totalFilesCount, onRefreshSubfolders }) => {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+
+  logger.debug('FileExplorer component rendering', {
+    filesCount: files.length,
+    currentFolder,
+    totalFilesCount,
+    expandedFoldersCount: expandedFolders.size,
+    fileNames: files.map(f => f.name)
+  });
   const [folderContents, setFolderContents] = useState<Map<string, FileItem[]>>(
     new Map()
   );
@@ -70,22 +165,24 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ files, currentFolder, isLoa
       setFolderContents(prev => new Map(prev).set(folderPath, contents));
       return contents;
     } catch (error) {
-      console.error('Error loading folder contents:', error);
+      logger.error('Error loading folder contents', error);
       return [];
     }
   }, []);
 
   // Función para refrescar todas las carpetas expandidas
   const refreshExpandedFolders = useCallback(async () => {
-    console.log('[FileExplorer] Refreshing expanded folders:', Array.from(expandedFolders));
+    logger.debug('FileExplorer refreshing expanded folders', { 
+      expandedFolders: Array.from(expandedFolders) 
+    });
     
     // Recargar contenido de todas las carpetas expandidas
     for (const folderPath of expandedFolders) {
       try {
         await loadFolderContents(folderPath);
-        console.log('[FileExplorer] Refreshed folder:', folderPath);
+        logger.debug('FileExplorer refreshed folder', { folderPath });
       } catch (error) {
-        console.error('[FileExplorer] Error refreshing folder:', folderPath, error);
+        logger.error('FileExplorer error refreshing folder', { folderPath, error });
       }
     }
   }, [expandedFolders, loadFolderContents]);
@@ -191,23 +288,23 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ files, currentFolder, isLoa
     return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   };
 
-  const handleFileClick = (file: FileItem) => {
+  const handleFileClick = useCallback((file: FileItem) => {
     if (file.isDirectory) {
       toggleFolder(file.path);
     } else {
       // TODO: Implementar previsualización de archivos
-      console.log('File clicked:', file);
+      logger.debug('File clicked', { fileName: file.name, filePath: file.path });
     }
-  };
+  }, [toggleFolder]);
 
-  const handleFileDoubleClick = (file: FileItem) => {
+  const handleFileDoubleClick = useCallback((file: FileItem) => {
     if (file.isDirectory) {
       onNavigateToFolder(file.path);
     } else {
       // TODO: Implementar apertura de archivos
-      console.log('File double-clicked:', file);
+      logger.debug('File double-clicked', { fileName: file.name, filePath: file.path });
     }
-  };
+  }, [onNavigateToFolder]);
 
   // Función para renderizar un elemento del árbol
   const renderTreeItem = (file: FileItem, level: number = 0) => {
@@ -319,6 +416,8 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ files, currentFolder, isLoa
       </div>
     </div>
   );
-};
+});
+
+FileExplorer.displayName = 'FileExplorer';
 
 export default FileExplorer;
