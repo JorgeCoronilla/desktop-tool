@@ -4,6 +4,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 // Lazy loading de componentes principales para code splitting
 const Layout = React.lazy(() => import('../components/Layout/Layout'));
 import { logger } from '../services/loggerService';
+import DebugLogger from '../utils/debugLogger';
 import {
   AppState,
   FileItem,
@@ -58,6 +59,8 @@ const App: React.FC = () => {
 
   const [openaiConfig, setOpenaiConfig] = useState<OpenAIConfig | null>(null);
   const [isOpenAIInitialized, setIsOpenAIInitialized] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
   const [tokenLimit, setTokenLimit] = useState<number>(4000);
   const [abortController, setAbortController] =
     useState<AbortController | null>(null);
@@ -71,13 +74,63 @@ const App: React.FC = () => {
 
   // Helper: refrescar el árbol si alguna herramienta modifica el sistema de archivos
 
+  // Función para configurar la API key
+  const handleApiKeySubmit = async () => {
+    if (!apiKeyInput.trim()) {
+      alert('Por favor, ingresa una API key válida');
+      return;
+    }
+
+    try {
+      // Intentar inicializar OpenAI con la nueva API key
+      const initResult = await window.electronAPI.initOpenAI(apiKeyInput.trim());
+      
+      if (initResult.success) {
+        setIsOpenAIInitialized(true);
+        setShowApiKeyModal(false);
+        setApiKeyInput('');
+
+        // Inicializar el MCP service con la nueva API key
+        if (mcpService) {
+          try {
+            const mcpInitialized = await mcpService.initializeWithApiKey(apiKeyInput.trim());
+            console.log('🔧 MCP service inicializado con nueva API key:', mcpInitialized);
+          } catch (error) {
+            console.error('Error inicializando MCP service con nueva API key:', error);
+          }
+        }
+
+        // Actualizar la configuración
+        const config = await window.electronAPI.checkOpenAIConfig();
+        setOpenaiConfig(config);
+
+        // Agregar mensaje de bienvenida
+        const welcomeMessage: ChatMessage = {
+          id: 'welcome-configured',
+          content: '¡Perfecto! Tu API key ha sido configurada correctamente. ¿En qué puedo ayudarte hoy?',
+          role: 'assistant',
+          timestamp: new Date(),
+        };
+
+        setAppState(prev => ({
+          ...prev,
+          chatMessages: [welcomeMessage],
+        }));
+      } else {
+        alert('Error al configurar la API key. Verifica que sea válida.');
+      }
+    } catch (error) {
+      console.error('Error configurando API key:', error);
+      alert('Error al configurar la API key. Inténtalo de nuevo.');
+    }
+  };
 
   // Verificar configuración de OpenAI al cargar
   useEffect(() => {
     const checkOpenAIConfig = async () => {
       // Initialize connection pools for external services
       try {
-        console.log('[App] Initializing connection pools...');
+        DebugLogger.appLifecycle('Initializing connection pools...');
         connectionPoolService.initializePool('openai', {
           maxConnections: 3,
           minConnections: 1,
@@ -90,61 +143,95 @@ const App: React.FC = () => {
           connectionTimeout: 15000,
           idleTimeout: 180000
         });
-        console.log('[App] Connection pools initialized successfully');
+        DebugLogger.appLifecycle('Connection pools initialized successfully');
       } catch (error) {
-        console.error('[App] Error initializing connection pools:', error);
+        DebugLogger.critical('Error initializing connection pools:', error);
       }
 
       // Inicializar MCPService
       try {
-        console.log('[App] Creating SecureMCPServiceWrapper...');
-        // Usar el wrapper seguro que no expone la API key
+        DebugLogger.appLifecycle('Creating SecureMCPServiceWrapper...');
+        
+        // Si estamos en preview del navegador, window.electronAPI no existe
+        if (!(window as any).electronAPI) {
+          console.warn('electronAPI no disponible: ejecutando en modo web');
+          
+          // Usar WebMCPService para modo web
+          const { WebMCPService } = await import('../services/webMcpService');
+          const webMcpService = new WebMCPService();
+          
+          console.log('🔍 [App] Verificando inicialización del WebMCPService...');
+          const isInitialized = await webMcpService.isInitialized();
+          console.log('📊 [App] Estado de inicialización del WebMCPService:', isInitialized);
+          
+          if (isInitialized) {
+            // Crear un wrapper compatible con la interfaz existente
+            const webMcpWrapper = {
+              isInitialized: () => Promise.resolve(true),
+              sendMessage: async (messages: any[], options?: { currentFolder?: string }) => {
+                const mcpMessages = messages.map(msg => ({
+                  role: msg.role,
+                  content: msg.content
+                }));
+                const response = await webMcpService.sendMessage(
+                  mcpMessages, 
+                  options?.currentFolder || '/',
+                  undefined, // onChunk - se manejará en el chat
+                  undefined  // abortSignal
+                );
+                return response; // Return the MCPResponse object directly
+              },
+              checkMCPServerHealth: () => webMcpService.isInitialized(),
+              getAvailableTools: () => Promise.resolve([]),
+              initializeWithApiKey: async (apiKey: string) => {
+                // En modo web, el servicio ya está inicializado
+                console.log('🔧 [WebMCP] initializeWithApiKey llamado, pero ya está inicializado');
+                return true;
+              }
+            };
+            
+            setMcpService(webMcpWrapper);
+            console.log('✅ [App] WebMCPService configurado correctamente');
+          } else {
+            console.error('❌ [App] WebMCPService no se pudo inicializar');
+          }
+          
+          const model = process.env.OPENAI_MODEL || 'gpt-4o';
+          setOpenaiConfig({ hasApiKey: true, model, isInitialized: true });
+          setIsOpenAIInitialized(true);
+
+          const welcomeMessage: ChatMessage = {
+            id: 'welcome-web',
+            content:
+              '¡Hola! Estás usando la versión web con MCP service integrado. Puedo ayudarte con tareas de gestión de archivos y más.',
+            role: 'assistant',
+            timestamp: new Date(),
+          };
+
+          setAppState(prev => ({
+            ...prev,
+            chatMessages: [welcomeMessage],
+          }));
+          return;
+        }
+        
+        // Usar el wrapper seguro que no expone la API key (modo Electron)
         const service = new SecureMCPServiceWrapper();
-        console.log('[App] SecureMCPServiceWrapper created, checking initialization...');
+        DebugLogger.appLifecycle('SecureMCPServiceWrapper created, checking initialization...');
         
         const isInitialized = await service.isInitialized();
-        console.log('[App] mcpService initialization status:', isInitialized);
+        DebugLogger.appLifecycle('mcpService initialization status:', isInitialized);
+        
+        // Siempre establecer el servicio, incluso si no está inicializado inicialmente
+        setMcpService(service);
         
         if (isInitialized) {
-          setMcpService(service);
-          console.log('[App] mcpService set successfully');
+          DebugLogger.appLifecycle('mcpService set successfully and initialized');
         } else {
-          console.warn('[App] mcpService failed to initialize');
+          DebugLogger.appLifecycle('mcpService set but not initialized yet - will initialize with API key later');
         }
       } catch (error) {
-        console.error('[App] Error initializing mcpService:', error);
-      }
-
-      // Si estamos en preview del navegador, window.electronAPI no existe
-      if (!(window as any).electronAPI) {
-        console.warn('electronAPI no disponible: ejecutando en modo web');
-        const model = process.env.OPENAI_MODEL || 'gpt-4o';
-        // En modo web usaremos un proxy backend local en lugar de exponer API key
-        setOpenaiConfig({ hasApiKey: true, model, isInitialized: true });
-        setIsOpenAIInitialized(true);
-
-        const welcomeMessage: ChatMessage = {
-          id: 'welcome-web',
-          content:
-            'Estás usando la versión web. Usaré un proxy local para comunicarme con OpenAI sin exponer tu API key en el navegador.',
-          role: 'assistant',
-          timestamp: new Date(),
-        };
-
-        // // Cargar datos mock para estilado del FileExplorer
-        // const { MOCK_ROOT, MOCK_TREE } = await import('../components/FileExplorer/mockData');
-        // setAppState(prev => ({
-        //   ...prev,
-        //   chatMessages: [welcomeMessage],
-        //   currentFolder: MOCK_ROOT,
-        //   files: MOCK_TREE[MOCK_ROOT] || [],
-        // }));
-        // Comentado: retiramos mock en modo web; dejamos mensaje de bienvenida
-        setAppState(prev => ({
-          ...prev,
-          chatMessages: [welcomeMessage],
-        }));
-        return;
+        DebugLogger.critical('Error initializing mcpService:', error);
       }
 
       try {
@@ -204,6 +291,20 @@ const App: React.FC = () => {
           setIsOpenAIInitialized(initResult.success);
 
           if (initResult.success) {
+            // Inicializar el MCP service con la misma API key
+            try {
+              const fullConfig = await window.electronAPI.getOpenAIConfig();
+              if (fullConfig.apiKey && mcpService) {
+                console.log('🔧 Inicializando MCP service con API key del usuario...');
+                const mcpInitialized = await mcpService.initializeWithApiKey(fullConfig.apiKey);
+                console.log('🔧 MCP service inicializado:', mcpInitialized);
+              } else if (!mcpService) {
+                console.warn('🔧 MCP service no está disponible para inicializar');
+              }
+            } catch (error) {
+              console.error('Error inicializando MCP service:', error);
+            }
+
             // Agregar mensaje de bienvenida
             const welcomeMessage: ChatMessage = {
               id: 'welcome',
@@ -229,6 +330,13 @@ const App: React.FC = () => {
     checkOpenAIConfig();
   }, []);
 
+  // Mostrar modal de API key cuando sea necesario
+  useEffect(() => {
+    if (openaiConfig && !openaiConfig.hasApiKey && !isOpenAIInitialized && (window as any).electronAPI) {
+      setShowApiKeyModal(true);
+    }
+  }, [openaiConfig, isOpenAIInitialized]);
+
   // File watcher effect
   useEffect(() => {
     if (!(window as any).electronAPI || !appState.currentFolder) {
@@ -237,17 +345,17 @@ const App: React.FC = () => {
 
     const startWatcher = async () => {
       try {
-        console.log('[DEBUG] Starting file watcher for:', appState.currentFolder);
+        DebugLogger.fileWatcher('Starting file watcher for:', appState.currentFolder);
         await window.electronAPI.startFileWatcher(appState.currentFolder);
-        console.log('[DEBUG] File watcher started successfully');
+        DebugLogger.fileWatcher('File watcher started successfully');
       } catch (error) {
-        console.error('[DEBUG] Error starting file watcher:', error);
+        DebugLogger.critical('Error starting file watcher:', error);
       }
     };
 
     // Listen for file system changes
     const handleFileSystemChange = (event: any, changeData: any) => {
-      console.log('[DEBUG] File system change detected:', changeData);
+      DebugLogger.fileWatcher('File system change detected:', changeData);
       // Refresh the current folder when changes are detected
       refreshCurrentFolderIfChanged();
     };
@@ -269,11 +377,11 @@ const App: React.FC = () => {
     return () => {
       const cleanup = async () => {
         try {
-          console.log('[DEBUG] Stopping file watcher');
+          DebugLogger.fileWatcher('Stopping file watcher');
           await window.electronAPI.stopFileWatcher();
-          console.log('[DEBUG] File watcher stopped');
+          DebugLogger.fileWatcher('File watcher stopped');
         } catch (error) {
-          console.error('[DEBUG] Error stopping file watcher:', error);
+          DebugLogger.critical('Error stopping file watcher:', error);
         }
       };
 
@@ -378,11 +486,11 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = async (content: string) => {
-    console.log('[App] handleSendMessage called with content:', content);
-    console.log('[App] mcpService status:', !!mcpService);
+    DebugLogger.mcpTools('handleSendMessage called with content:', content);
+    DebugLogger.mcpTools('mcpService status:', !!mcpService);
     
     if (!mcpService) {
-      console.warn('[App] mcpService is not initialized');
+      DebugLogger.critical('mcpService is not initialized');
       const errorMessage: ChatMessage = {
         id: Date.now().toString(),
         content: '❌ MCPService no está inicializado. Por favor, recarga la aplicación.',
@@ -419,9 +527,37 @@ Ejemplos:
 
 Respuesta:`;
 
-        const response = await window.electronAPI.sendMessageToOpenAI([
-           { id: Date.now().toString(), role: 'user', content: analysisPrompt, timestamp: new Date() }
-         ]);
+        let response;
+        
+        // Verificar si estamos en entorno Electron o web
+        if ((window as any).electronAPI?.sendMessageToOpenAI) {
+          // Entorno Electron
+          response = await (window as any).electronAPI.sendMessageToOpenAI([
+             { id: Date.now().toString(), role: 'user', content: analysisPrompt, timestamp: new Date() }
+           ]);
+        } else {
+          // Entorno web - usar el backend proxy
+          const backendResponse = await fetch('http://localhost:4000/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messages: [{ role: 'user', content: analysisPrompt }],
+              model: openaiConfig.model || 'gpt-4o'
+            }),
+          });
+          
+          if (!backendResponse.ok) {
+            throw new Error(`Backend response failed: ${backendResponse.status}`);
+          }
+          
+          const backendData = await backendResponse.json();
+          response = {
+            success: true,
+            response: backendData.response || backendData.content
+          };
+        }
 
          if (!response.success || !response.response) {
            throw new Error('OpenAI response failed');
@@ -466,7 +602,7 @@ Respuesta:`;
       return;
     }
 
-    console.log('[App] Creating new user message');
+    DebugLogger.mcpTools('Creating new user message');
     const newMessage: ChatMessage = {
       id: Date.now().toString(),
       content,
@@ -474,7 +610,7 @@ Respuesta:`;
       timestamp: new Date(),
     };
 
-    console.log('[App] Updating app state with new message and loading state');
+    DebugLogger.mcpTools('Updating app state with new message and loading state');
     setAppState(prev => ({
       ...prev,
       chatMessages: [...prev.chatMessages, newMessage],
@@ -515,10 +651,10 @@ Respuesta:`;
       });
 
       // Verificar si se necesita confirmación
-      console.log('[DEBUG] Checking for confirmation need:', !!response.needsConfirmation);
+      DebugLogger.mcpTools('Checking for confirmation need:', !!response.needsConfirmation);
       if (response.needsConfirmation) {
-        console.log('[DEBUG] Confirmation needed for:', response.needsConfirmation.toolName);
-        console.log('[DEBUG] Confirmation message:', response.needsConfirmation.message);
+        DebugLogger.mcpTools('Confirmation needed for:', response.needsConfirmation.toolName);
+        DebugLogger.mcpTools('Confirmation message:', response.needsConfirmation.message);
         
         // Mostrar modal de confirmación
         const confirmed = await new Promise<boolean>((resolve) => {
@@ -554,7 +690,7 @@ Respuesta:`;
           });
 
           // Refrescar la carpeta si se ejecutaron herramientas
-          console.log('[DEBUG] Confirmed response:', {
+          DebugLogger.mcpTools('Confirmed response:', {
             hasContent: !!confirmedResponse.content,
             hasToolCalls: !!confirmedResponse.toolCalls,
             toolCallsLength: confirmedResponse.toolCalls?.length || 0,
@@ -562,16 +698,16 @@ Respuesta:`;
           });
           
           if (confirmedResponse.toolCalls && confirmedResponse.toolCalls.length > 0) {
-            console.log('[DEBUG] Tool calls detected in confirmed response, applying 500ms delay...');
+            DebugLogger.mcpTools('Tool calls detected in confirmed response, applying 500ms delay...');
             // Agregar un pequeño delay para permitir que las operaciones de archivo se completen
             setTimeout(async () => {
-              console.log('[DEBUG] Refreshing folder after 500ms delay...');
+              DebugLogger.mcpTools('Refreshing folder after 500ms delay...');
               await refreshCurrentFolderIfChanged();
             }, 500);
           } else {
-            console.log('[DEBUG] No tool calls in confirmed response, applying 500ms delay anyway...');
+            DebugLogger.mcpTools('No tool calls in confirmed response, applying 500ms delay anyway...');
             setTimeout(async () => {
-              console.log('[DEBUG] Refreshing folder after 500ms delay (no tool calls)...');
+              DebugLogger.mcpTools('Refreshing folder after 500ms delay (no tool calls)...');
               await refreshCurrentFolderIfChanged();
             }, 500);
           }
@@ -598,7 +734,7 @@ Respuesta:`;
         });
 
         // Refrescar la carpeta si se ejecutaron herramientas que modifican archivos
-        console.log('[DEBUG] Response from MCP:', {
+        DebugLogger.mcpTools('Response from MCP:', {
           hasContent: !!response.content,
           hasToolCalls: !!response.toolCalls,
           toolCallsLength: response.toolCalls?.length || 0,
@@ -607,17 +743,17 @@ Respuesta:`;
         });
         
         if (response.toolCalls && response.toolCalls.length > 0) {
-          console.log('[DEBUG] Tool calls detected:', response.toolCalls.map(tc => tc.name));
-          console.log('[DEBUG] Applying 500ms delay before refreshing folder...');
+          DebugLogger.mcpTools('Tool calls detected:', response.toolCalls.map(tc => tc.name));
+          DebugLogger.mcpTools('Applying 500ms delay before refreshing folder...');
           // Agregar un pequeño delay para permitir que las operaciones de archivo se completen
           setTimeout(async () => {
-            console.log('[DEBUG] Refreshing folder after 500ms delay (general response)...');
+            DebugLogger.mcpTools('Refreshing folder after 500ms delay (general response)...');
             await refreshCurrentFolderIfChanged();
           }, 500);
         } else {
-          console.log('[DEBUG] No tool calls detected, applying 500ms delay anyway for testing...');
+          DebugLogger.mcpTools('No tool calls detected, applying 500ms delay anyway for testing...');
           setTimeout(async () => {
-            console.log('[DEBUG] Refreshing folder after 500ms delay (no tool calls - general)...');
+            DebugLogger.mcpTools('Refreshing folder after 500ms delay (no tool calls - general)...');
             await refreshCurrentFolderIfChanged();
           }, 500);
         }
@@ -645,20 +781,20 @@ Respuesta:`;
   // Helper: refrescar el árbol si se ejecutaron herramientas que modifican archivos
   const refreshCurrentFolderIfChanged = async () => {
     try {
-      console.log('[DEBUG] refreshCurrentFolderIfChanged called');
-      console.log('[DEBUG] electronAPI available:', !!(window as any).electronAPI);
-      console.log('[DEBUG] currentFolder:', appState.currentFolder);
+      DebugLogger.folderRefresh('refreshCurrentFolderIfChanged called');
+      DebugLogger.folderRefresh('electronAPI available:', !!(window as any).electronAPI);
+      DebugLogger.folderRefresh('currentFolder:', appState.currentFolder);
       
       if (!(window as any).electronAPI) {
-        console.log('[DEBUG] No electronAPI available, skipping refresh');
+        DebugLogger.folderRefresh('No electronAPI available, skipping refresh');
         return; // Solo aplica en Electron
       }
       if (!appState.currentFolder) {
-        console.log('[DEBUG] No currentFolder set, skipping refresh');
+        DebugLogger.folderRefresh('No currentFolder set, skipping refresh');
         return;
       }
       
-      console.log('[DEBUG] Reading directory:', appState.currentFolder);
+      DebugLogger.folderRefresh('Reading directory:', appState.currentFolder);
       
       // Use batching service to optimize multiple IPC calls
       let files: FileItem[] = [];
@@ -667,17 +803,17 @@ Respuesta:`;
         const { files: batchedFiles, totalCount } = await batchService.getDirectoryInfo(appState.currentFolder);
         files = batchedFiles;
         totalFilesCount = totalCount;
-        console.log('[DEBUG] Directory read successful, files count:', files.length);
-        console.log('[DEBUG] Files found:', files.map(f => f.name));
-        console.log('[DEBUG] Total files recursively:', totalFilesCount);
+        DebugLogger.folderRefresh('Directory read successful, files count:', files.length);
+        DebugLogger.folderRefresh('Files found:', files.length, 'files');
+        DebugLogger.folderRefresh('Total files recursively:', totalFilesCount);
       } catch (batchError) {
-        console.error('[DEBUG] Error with batched calls, falling back to individual calls:', batchError);
+        DebugLogger.critical('Error with batched calls, falling back to individual calls:', batchError);
         // Fallback to individual calls if batching fails
         try {
           files = await window.electronAPI.readDirectory(appState.currentFolder);
           totalFilesCount = await window.electronAPI.countFilesRecursively(appState.currentFolder);
         } catch (fallbackError) {
-          console.error('[DEBUG] Error with fallback calls:', fallbackError);
+          DebugLogger.critical('Error with fallback calls:', fallbackError);
           totalFilesCount = files.length;
         }
       }
@@ -691,13 +827,13 @@ Respuesta:`;
         // También forzar actualización con timestamp para garantizar re-render
         lastUpdate: Date.now()
       }));
-      console.log('[DEBUG] App state updated with new files and total count (forced new reference)');
+      DebugLogger.folderRefresh('App state updated with new files and total count');
       
       // También refrescar las subcarpetas expandidas
-      console.log('[DEBUG] Refreshing expanded subfolders...');
+      DebugLogger.folderRefresh('Refreshing expanded subfolders...');
       handleRefreshSubfolders();
     } catch (e) {
-      console.error('[DEBUG] Error in refreshCurrentFolderIfChanged:', e);
+      DebugLogger.critical('Error in refreshCurrentFolderIfChanged:', e);
     }
   };
 
@@ -718,13 +854,13 @@ Respuesta:`;
   };
 
   const handleRefreshSubfolders = () => {
-    console.log('[DEBUG] handleRefreshSubfolders called');
+    DebugLogger.folderRefresh('handleRefreshSubfolders called');
     // Llamar a la función expuesta por FileExplorer
     if ((window as any).__refreshExpandedFolders) {
-      console.log('[DEBUG] Calling __refreshExpandedFolders');
+      DebugLogger.folderRefresh('Calling __refreshExpandedFolders');
       (window as any).__refreshExpandedFolders();
     } else {
-      console.log('[DEBUG] __refreshExpandedFolders not available');
+      DebugLogger.folderRefresh('__refreshExpandedFolders not available');
     }
   };
 
@@ -756,8 +892,117 @@ Respuesta:`;
           />
         </Suspense>
       </ErrorBoundary>
-      
-      {/* Modal de confirmación */}
+
+      {/* Modal de configuración de API Key */}
+      {showApiKeyModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              padding: '32px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+              maxWidth: '500px',
+              width: '90%',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px 0', color: '#333', fontSize: '20px' }}>
+              🔑 Configurar API Key de OpenAI
+            </h3>
+            <p style={{ margin: '0 0 24px 0', color: '#666', lineHeight: '1.5' }}>
+              Para usar todas las funciones de la aplicación, necesitas configurar tu API key de OpenAI.
+              Puedes obtener una en{' '}
+              <a 
+                href="https://platform.openai.com/api-keys" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                style={{ color: '#007bff' }}
+              >
+                platform.openai.com
+              </a>
+            </p>
+            <div style={{ marginBottom: '24px' }}>
+              <label 
+                htmlFor="apiKeyInput" 
+                style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  color: '#333', 
+                  fontWeight: '500' 
+                }}
+              >
+                API Key:
+              </label>
+              <input
+                id="apiKeyInput"
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="sk-..."
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontFamily: 'monospace',
+                }}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    handleApiKeySubmit();
+                  }
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowApiKeyModal(false)}
+                style={{
+                  padding: '10px 20px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  color: '#666',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleApiKeySubmit}
+                disabled={!apiKeyInput.trim()}
+                style={{
+                  padding: '10px 20px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  backgroundColor: apiKeyInput.trim() ? '#007bff' : '#ccc',
+                  color: 'white',
+                  cursor: apiKeyInput.trim() ? 'pointer' : 'not-allowed',
+                  fontSize: '14px',
+                }}
+              >
+                Configurar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmación de operaciones */}
       {pendingConfirmation && (
         <div style={{
           position: 'fixed',

@@ -80,14 +80,34 @@ function ensureOpenAIInitialized(): void {
   }
 }
 
-function ensureIntegratedMCPServiceInitialized(): void {
+// Variable global para almacenar la API key del usuario
+let userApiKey: string | null = null;
+
+function ensureIntegratedMCPServiceInitialized(providedApiKey?: string): void {
+  console.log('🔧 [Main] Verificando inicialización del IntegratedMCPService...');
+  
   if (!integratedMcpService) {
-    const apiKey = process.env.OPENAI_API_KEY;
+    // Usar la API key proporcionada, la almacenada del usuario, o la del entorno
+    const apiKey = providedApiKey || userApiKey || process.env.OPENAI_API_KEY;
+    console.log('🔑 [Main] Estado de la API Key:', {
+      defined: !!apiKey,
+      length: apiKey ? apiKey.length : 0,
+      firstChars: apiKey ? apiKey.substring(0, 8) + '...' : 'undefined',
+      source: providedApiKey ? 'provided' : userApiKey ? 'user-stored' : 'environment'
+    });
+    
     if (!apiKey) {
-      logger.warn('IntegratedMCP: OPENAI_API_KEY not found in environment');
+      console.error('❌ [Main] No se puede inicializar IntegratedMCPService: OPENAI_API_KEY no definida');
+      logger.warn('IntegratedMCP: OPENAI_API_KEY not found in environment or user config');
       return;
     }
 
+    // Almacenar la API key del usuario si se proporcionó
+    if (providedApiKey) {
+      userApiKey = providedApiKey;
+    }
+
+    console.log('🚀 [Main] Inicializando IntegratedMCPService...');
     logger.info('Initializing IntegratedMCPService');
     try {
       integratedMcpService = new IntegratedMCPService({
@@ -95,11 +115,15 @@ function ensureIntegratedMCPServiceInitialized(): void {
         model: process.env.OPENAI_MODEL || 'gpt-4o',
         tier: 2 // Usar Tier 2 por defecto para mejores límites
       });
+      console.log('✅ [Main] IntegratedMCPService inicializado correctamente');
       logger.info('IntegratedMCPService initialized successfully');
     } catch (error) {
+      console.error('❌ [Main] Error inicializando IntegratedMCPService:', error);
       logger.error('Error initializing IntegratedMCPService', error);
       integratedMcpService = null;
     }
+  } else {
+    console.log('ℹ️ [Main] IntegratedMCPService ya está inicializado');
   }
 }
 
@@ -196,8 +220,20 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   createWindow();
-  // Intentar inicialización automática tras crear la ventana
-  ensureOpenAIInitialized();
+  
+  // Intentar inicializar el IntegratedMCPService al arrancar
+  // (solo funcionará si hay OPENAI_API_KEY en el entorno)
+  try {
+    logger.info('Auto-initializing IntegratedMCPService on app ready...');
+    ensureIntegratedMCPServiceInitialized();
+    if (integratedMcpService) {
+      logger.info('IntegratedMCPService auto-initialized successfully');
+    } else {
+      logger.warn('IntegratedMCPService auto-initialization failed - API key may be missing');
+    }
+  } catch (error) {
+    logger.error('Error during IntegratedMCPService auto-initialization', error);
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -675,6 +711,19 @@ ipcMain.handle(
   }
 );
 
+ipcMain.handle('excel-style-cells', async (event, filePath: string, styles: any[]) => {
+    try {
+      const result = await mcpService.callTool('style_excel_cells', { filePath, styles });
+      return result;
+    } catch (error) {
+      logger.error('Error styling Excel cells', { filePath, error });
+      return { 
+        success: false,
+        error: error instanceof Error ? error.message : 'Error desconocido'
+      };
+    }
+  });
+
 // IPC: Nuevos handlers para fórmulas de Excel usando xlsx-calc
 ipcMain.handle(
   'excel-read-with-formulas',
@@ -1030,9 +1079,9 @@ ipcMain.handle('get-openai-config', async () => {
 });
 
 // IPC handlers para el servicio MCP integrado
-ipcMain.handle('mcp-service-init', async () => {
+ipcMain.handle('mcp-service-init', async (_, apiKey?: string) => {
   try {
-    ensureIntegratedMCPServiceInitialized();
+    ensureIntegratedMCPServiceInitialized(apiKey);
     return { 
       success: true, 
       isInitialized: !!integratedMcpService 

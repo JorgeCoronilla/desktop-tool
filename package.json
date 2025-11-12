@@ -1,6 +1,6 @@
 {
   "name": "desktop-helper",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Asistente de escritorio para operaciones de archivos con IA",
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -15,7 +15,8 @@
     "dist": "npm run build:all && electron-builder",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "webpack serve --mode development",
-    "dev:proxy": "node server/server.js",
+    "build:server": "tsc server/server.ts --outDir dist/server --target es2020 --module commonjs --moduleResolution node --esModuleInterop --allowSyntheticDefaultImports --resolveJsonModule",
+    "dev:proxy": "npm run build:server && node dist/server/server/server.js",
     "dev:web": "concurrently \"npm run dev:renderer\" \"npm run dev:proxy\"",
     "dev:main": "npm run build:main && cross-env NODE_ENV=development electron dist/main/main/main.js",
     "start": "npm run build && npm run build:main && electron dist/main/main/main.js",
@@ -93,7 +94,8 @@
     "files": [
       "dist/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      ".env"
     ],
     "mac": {
       "category": "public.app-category.productivity",

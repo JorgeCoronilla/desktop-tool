@@ -8,6 +8,7 @@ export interface MCPMessage {
 
 export interface MCPServiceWrapper {
   isInitialized(): Promise<boolean>;
+  initializeWithApiKey(apiKey: string): Promise<boolean>;
   sendMessage(messages: (ChatMessage | MCPMessage)[], options?: { currentFolder?: string }): Promise<any>;
   checkMCPServerHealth(): Promise<boolean>;
   getAvailableTools(): Promise<string[]>;
@@ -26,6 +27,20 @@ export class SecureMCPServiceWrapper implements MCPServiceWrapper {
       return false;
     } catch (error) {
       logger.error('Error checking MCP service initialization', error);
+      return false;
+    }
+  }
+
+  async initializeWithApiKey(apiKey: string): Promise<boolean> {
+    try {
+      const result = await window.electronAPI?.mcpServiceInit(apiKey);
+      if (result?.success) {
+        this.initialized = result.isInitialized;
+        return this.initialized;
+      }
+      return false;
+    } catch (error) {
+      logger.error('Error initializing MCP service with API key', error);
       return false;
     }
   }

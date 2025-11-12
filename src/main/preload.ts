@@ -90,6 +90,10 @@ export interface ElectronAPI {
       deleteRows?: number[];
     }
   ) => Promise<{ success: boolean; data?: any; error?: string }>;
+  styleExcelCells: (
+    filePath: string,
+    styles: any[]
+  ) => Promise<{ success: boolean; error?: string }>;
   // Excel formula functions
   readExcelWithFormulas: (
     filePath: string,
@@ -157,7 +161,7 @@ export interface ElectronAPI {
     error?: string;
   }>;
   // MCP Service functions (secure)
-  mcpServiceInit: () => Promise<{ success: boolean; isInitialized: boolean; error?: string }>;
+  mcpServiceInit: (apiKey?: string) => Promise<{ success: boolean; isInitialized: boolean; error?: string }>;
   mcpServiceSendMessage: (
     messages: ChatMessage[],
     options?: { currentFolder?: string }
@@ -236,6 +240,11 @@ const electronAPI: ElectronAPI = {
     }
   ) => ipcRenderer.invoke('excel-modify', filePath, modifications),
 
+  styleExcelCells: (
+    filePath: string,
+    styles: any[]
+  ) => ipcRenderer.invoke('excel-style-cells', filePath, styles),
+
   // Excel formula functions
   readExcelWithFormulas: (filePath: string, sheetName?: string, calculateFormulas?: boolean) =>
     ipcRenderer.invoke('excel-read-with-formulas', filePath, sheetName, calculateFormulas),
@@ -252,7 +261,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('excel-get-formulas-info', filePath, sheetName),
 
   // MCP Service functions (secure)
-  mcpServiceInit: () => ipcRenderer.invoke('mcp-service-init'),
+  mcpServiceInit: (apiKey?: string) => ipcRenderer.invoke('mcp-service-init', apiKey),
   mcpServiceSendMessage: (messages: ChatMessage[], options?: { currentFolder?: string }) =>
     ipcRenderer.invoke('mcp-service-send-message', messages, options),
   mcpServiceCheckHealth: () => ipcRenderer.invoke('mcp-service-check-health'),

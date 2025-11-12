@@ -580,6 +580,40 @@ export class ExcelTools {
   }
 
   /**
+   * Aplica estilos a celdas de un archivo Excel
+   */
+  static async styleExcelCells(
+    filePath: string,
+    styles: any[],
+    sheetName?: string
+  ): Promise<ToolResult> {
+    try {
+      if (window.electronAPI && window.electronAPI.styleExcelCells) {
+        const res = await window.electronAPI.styleExcelCells(filePath, styles);
+        if (res.success) {
+          return {
+            success: true,
+            message: 'Estilos aplicados a Excel exitosamente',
+          };
+        }
+        return {
+          success: false,
+          error: res.error || 'Error desconocido al aplicar estilos a Excel',
+        };
+      }
+      return {
+        success: false,
+        error: 'API de Electron no disponible para aplicar estilos a Excel',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Error al aplicar estilos a Excel: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+      };
+    }
+  }
+
+  /**
    * Lee un archivo Excel con soporte completo de fórmulas
    */
   static async readExcelWithFormulas(
@@ -973,6 +1007,15 @@ export const AVAILABLE_TOOLS: FileSystemTool[] = [
       modifications: 'object',
     },
     execute: ExcelTools.modifyExcel,
+  },
+  {
+    name: 'style_excel_cells',
+    description: 'Aplica estilos a celdas o rangos de celdas en un archivo de Excel existente.',
+    parameters: {
+      filePath: 'string',
+      styles: 'array',
+    },
+    execute: ExcelTools.styleExcelCells,
   },
   {
     name: 'read_excel_with_formulas',

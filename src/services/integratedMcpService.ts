@@ -180,15 +180,29 @@ export class IntegratedMCPService {
     config: IntegratedMCPConfig,
     confirmationCallback?: ConfirmationCallback
   ) {
+    console.log('🔧 [IntegratedMCPService] Iniciando constructor con config:', {
+      model: config.model,
+      tier: config.tier || 1,
+      hasApiKey: !!config.apiKey,
+      apiKeyLength: config.apiKey?.length || 0
+    });
+    
     this.openai = new OpenAI({ apiKey: config.apiKey });
     this.model = config.model;
-    this.mcpService = new ElectronMCPService();
+    this.mcpService = new ElectronMCPService({ useAutomaticRegistration: true });
     this.confirmationCallback = confirmationCallback;
     
     // Obtener límites dinámicos basados en el modelo y tier
     const limits = this.getModelLimits(config.model, config.tier || 1);
     this.maxTokensPerMessage = config.maxTokensPerMessage || limits.maxPerMessage;
     this.maxTokensPerConversation = config.maxTokensPerConversation || limits.maxPerConversation;
+    
+    console.log('✅ [IntegratedMCPService] Constructor completado:', {
+      model: this.model,
+      maxTokensPerMessage: this.maxTokensPerMessage,
+      maxTokensPerConversation: this.maxTokensPerConversation,
+      mcpServiceInitialized: !!this.mcpService
+    });
   }
 
   /**
@@ -389,6 +403,13 @@ export class IntegratedMCPService {
     messages: ChatMessage[],
     options?: { currentFolder?: string }
   ): Promise<MCPResponse> {
+    console.log('📨 [IntegratedMCPService] sendMessage iniciado:', {
+      messagesCount: messages.length,
+      currentFolder: options?.currentFolder,
+      model: this.model,
+      conversationTokens: this.conversationTokens
+    });
+    
     logger.debug('IntegratedMCP sendMessage called', { 
       messagesCount: messages.length 
     });
@@ -396,6 +417,7 @@ export class IntegratedMCPService {
     // Verificar caché de respuesta completa primero
     const cachedResponse = cacheService.getCachedResponse(messages, options?.currentFolder);
     if (cachedResponse) {
+      console.log('💾 [IntegratedMCPService] Respuesta encontrada en caché');
       logger.debug('IntegratedMCP returning cached complete response');
       return cachedResponse;
     }

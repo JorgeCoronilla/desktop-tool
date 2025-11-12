@@ -72,7 +72,7 @@ module.exports = (envArgs, argv) => {
       __filename: false
     },
     output: {
-      filename: isDev ? 'bundle.js' : '[name].[contenthash].js',
+      filename: isDev ? '[name].bundle.js' : '[name].[contenthash].js',
       path: path.resolve(__dirname, 'dist'),
       clean: true,
     },

@@ -20,9 +20,9 @@ if (typeof window === 'undefined') {
 const isDevelopment = process.env.NODE_ENV === 'development';
 const isRenderer = typeof window !== 'undefined';
 
-// Configuración base del logger
+// Configuración base para todos los loggers
 const baseConfig = {
-  level: isDevelopment ? 'debug' : 'info',
+  level: isDevelopment ? 'info' : 'info', // Cambiado de 'debug' a 'info' para reducir ruido
   timestamp: pino.stdTimeFunctions.isoTime,
   formatters: {
     level: (label: string) => {
@@ -34,20 +34,19 @@ const baseConfig = {
 // Configuración específica para el proceso principal (main)
 const mainLoggerConfig = {
   ...baseConfig,
-  transport: isDevelopment ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'yyyy-mm-dd HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
+  // Simplificamos la configuración para evitar problemas con workers
+  ...(isDevelopment ? {
+    // En desarrollo, usamos configuración simple sin transport
   } : {
-    target: 'pino/file',
-    options: {
-      destination: path ? path.join(process.cwd(), 'logs', 'app.log') : './app.log',
-      mkdir: true,
-    },
-  },
+    // En producción, escribimos a archivo si es posible
+    transport: path ? {
+      target: 'pino/file',
+      options: {
+        destination: path.join(process.cwd(), 'logs', 'app.log'),
+        mkdir: true,
+      },
+    } : undefined,
+  }),
 };
 
 // Configuración específica para el proceso renderer
@@ -60,12 +59,25 @@ const rendererLoggerConfig = {
 
 // Crear el logger apropiado según el contexto
 const createLogger = () => {
-  if (isRenderer) {
-    // En el renderer, usamos una configuración más simple
-    return pino(rendererLoggerConfig);
-  } else {
-    // En el proceso principal, usamos la configuración completa
-    return pino(mainLoggerConfig);
+  try {
+    if (isRenderer) {
+      // En el renderer, usamos una configuración más simple
+      return pino(rendererLoggerConfig);
+    } else {
+      // En el proceso principal, usamos la configuración completa
+      return pino(mainLoggerConfig);
+    }
+  } catch (error) {
+    // Fallback a console si el logger falla
+    console.warn('Failed to create pino logger, falling back to console:', error);
+    return {
+      debug: console.log,
+      info: console.log,
+      warn: console.warn,
+      error: console.error,
+      fatal: console.error,
+      child: () => createLogger(),
+    } as any;
   }
 };
 
@@ -84,42 +96,62 @@ class LoggerService {
 
   // Métodos de logging con diferentes niveles
   debug(message: string, data?: any) {
-    this.logger.debug(data, message);
+    try {
+      this.logger.debug(data, message);
+    } catch (error) {
+      console.log(`[DEBUG] ${this.context}: ${message}`, data);
+    }
   }
 
   info(message: string, data?: any) {
-    this.logger.info(data, message);
+    try {
+      this.logger.info(data, message);
+    } catch (error) {
+      console.log(`[INFO] ${this.context}: ${message}`, data);
+    }
   }
 
   warn(message: string, data?: any) {
-    this.logger.warn(data, message);
+    try {
+      this.logger.warn(data, message);
+    } catch (error) {
+      console.warn(`[WARN] ${this.context}: ${message}`, data);
+    }
   }
 
   error(message: string, error?: Error | any) {
-    if (error instanceof Error) {
-      this.logger.error({ 
-        error: {
-          message: error.message,
-          stack: error.stack,
-          name: error.name,
-        }
-      }, message);
-    } else {
-      this.logger.error(error, message);
+    try {
+      if (error instanceof Error) {
+        this.logger.error({ 
+          error: {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+          }
+        }, message);
+      } else {
+        this.logger.error(error, message);
+      }
+    } catch (loggerError) {
+      console.error(`[ERROR] ${this.context}: ${message}`, error);
     }
   }
 
   fatal(message: string, error?: Error | any) {
-    if (error instanceof Error) {
-      this.logger.fatal({ 
-        error: {
-          message: error.message,
-          stack: error.stack,
-          name: error.name,
-        }
-      }, message);
-    } else {
-      this.logger.fatal(error, message);
+    try {
+      if (error instanceof Error) {
+        this.logger.fatal({ 
+          error: {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+          }
+        }, message);
+      } else {
+        this.logger.fatal(error, message);
+      }
+    } catch (loggerError) {
+      console.error(`[FATAL] ${this.context}: ${message}`, error);
     }
   }
 
@@ -170,31 +202,61 @@ class LoggerService {
 // Instancia por defecto
 const defaultLogger = new LoggerService('App');
 
-// Función helper para reemplazar console.log
+// Función helper para reemplazar console.log con filtrado inteligente
 const replaceConsole = () => {
   if (isDevelopment) {
-    // En desarrollo, mantenemos console.log pero también loggeamos
+    // En desarrollo, mantenemos console.log original pero filtramos logs innecesarios
     const originalLog = console.log;
     const originalWarn = console.warn;
     const originalError = console.error;
 
+    // Filtros para evitar logs innecesarios
+    const shouldSkipLog = (args: any[]) => {
+      const firstArg = args[0];
+      if (typeof firstArg === 'string') {
+        // Filtrar logs de React DevTools, webpack, y otros sistemas internos
+        return firstArg.includes('React DevTools') ||
+               firstArg.includes('webpack') ||
+               firstArg.includes('HMR') ||
+               firstArg.includes('Download the React DevTools') ||
+               firstArg.includes('[object Object]');
+      }
+      // Filtrar objetos vacíos o sin información útil
+      if (typeof firstArg === 'object' && firstArg !== null) {
+        const str = JSON.stringify(firstArg);
+        return str === '{}' || str.includes('[object Object]');
+      }
+      return false;
+    };
+
     console.log = (...args: any[]) => {
       originalLog(...args);
-      defaultLogger.debug('Console Log', { args });
+      // Solo loggear si no es ruido
+      if (!shouldSkipLog(args)) {
+        defaultLogger.debug('Console Log', { args });
+      }
     };
 
     console.warn = (...args: any[]) => {
       originalWarn(...args);
-      defaultLogger.warn('Console Warn', { args });
+      if (!shouldSkipLog(args)) {
+        defaultLogger.warn('Console Warn', { args });
+      }
     };
 
     console.error = (...args: any[]) => {
       originalError(...args);
-      defaultLogger.error('Console Error', { args });
+      if (!shouldSkipLog(args)) {
+        defaultLogger.error('Console Error', { args });
+      }
     };
   } else {
-    // En producción, reemplazamos completamente console
-    console.log = (...args: any[]) => defaultLogger.debug('Console Log', { args });
+    // En producción, reemplazamos completamente console pero con filtrado
+    console.log = (...args: any[]) => {
+      if (args.length > 0 && args[0] && typeof args[0] === 'string') {
+        defaultLogger.info('Console Log', { args });
+      }
+    };
     console.warn = (...args: any[]) => defaultLogger.warn('Console Warn', { args });
     console.error = (...args: any[]) => defaultLogger.error('Console Error', { args });
   }
